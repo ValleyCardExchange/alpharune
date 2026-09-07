@@ -5668,6 +5668,10 @@ void GameEngine::killUnit(GameObjectId unit_id) {
     unit.location = std::nullopt;
     unit.damage_marked = 0;
     unit.combat_designation = CombatDesignation::None;
+    // CR 441.1.a — Empowered clears on leaving the board. Combat death is
+    // a board-exit path too (spec addendum #10); matches the reset
+    // EffectExecutor::killObject applies on the effect/ability-kill path.
+    unit.is_empowered = false;
     if (!is_token) {
         state_.player(unit.owner).trash.push_back(unit_id);
     } else {

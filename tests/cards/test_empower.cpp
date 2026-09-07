@@ -97,6 +97,40 @@ TEST_F(EmpowerTest, EmpoweredClearsWhenBouncedToHand) {
         << "Empowered must clear when the object leaves the board via bounce";
 }
 
+// Test #32: combat death (GameEngine::killUnit, via processLethalDamage) is
+// also a board-exit path — separate code from EffectExecutor::killObject,
+// exercised the way ElderDragonShieldTest in
+// test_targeting_and_combat_invariants.cpp drives lethal-damage cleanup.
+TEST_F(EmpowerTest, EmpoweredClearsOnCombatDeath) {
+    GameEngine engine(card_db, events, card_registry);
+    auto& s = engine.mutableState();
+    s.mode          = ModeOfPlay{};
+    s.players[0].id = P1;
+    s.players[1].id = P2;
+
+    auto unit_id = s.createObject();
+    auto& u = s.getObject(unit_id);
+    u.owner = P1;
+    u.controller = P1;
+    u.card_type = CardType::Unit;
+    u.name = "TestUnit";
+    u.base_might = 1;
+    u.current_might = 1;
+    u.zone = ZoneType::Base;
+    u.location = BaseLocation{P1};
+    u.damage_marked = 1;  // lethal at 1M
+    u.is_empowered = true;
+
+    engine.testHook_processLethalDamage();
+
+    ASSERT_FALSE(s.objectExists(unit_id) &&
+                 s.getObject(unit_id).zone == ZoneType::Base)
+        << "sanity: the unit must actually have died (moved off the board)";
+    EXPECT_FALSE(s.getObject(unit_id).is_empowered)
+        << "Empowered must clear on combat death (GameEngine::killUnit), "
+           "not just the effect/ability-kill path (EffectExecutor::killObject)";
+}
+
 // ─── Test #3: disempower_self activation cost gate + payment ───────────────
 
 namespace {
