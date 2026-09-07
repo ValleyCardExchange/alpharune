@@ -1474,12 +1474,17 @@ struct StagedPowerDiscount {
     PlayerState* ps = nullptr;
     int saved = 0;
     StagedPowerDiscount(const GameState& state, PlayerId player, int amount) {
-        if (amount <= 0) return;
+        // ALWAYS write, including a zero amount: a query must price the card
+        // at exactly the discount it was handed, never at whatever happened to
+        // be sitting in the field. (A state cloned mid-payment — MCTS does
+        // clone states — carries a live non-zero staging value, and a guard
+        // that skipped the write for 0 would silently let it leak into every
+        // undiscounted offer generated from that clone.)
         ps = &const_cast<GameState&>(state).player(player);
         saved = ps->transient_power_discount;
-        ps->transient_power_discount = amount;
+        ps->transient_power_discount = std::max(0, amount);
     }
-    ~StagedPowerDiscount() { if (ps) ps->transient_power_discount = saved; }
+    ~StagedPowerDiscount() { ps->transient_power_discount = saved; }
     StagedPowerDiscount(const StagedPowerDiscount&) = delete;
     StagedPowerDiscount& operator=(const StagedPowerDiscount&) = delete;
 };
@@ -1504,20 +1509,48 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     //
     // Two shapes, decided BEFORE anything is paid (both cost paths below read
     // it):
-    //   • a RESTRICTED intent — the play committed to choosing at a named
-    //     battlefield, so the discount is committed too and is read straight
-    //     off that battlefield's flag. A claimed restriction on a battlefield
-    //     that carries no Tomb reads 0, so a hand-built intent cannot invent
-    //     a discount;
+    //   • a RESTRICTED intent — the play commits to choosing at a named
+    //     battlefield. `target_battlefield_restriction` is a CLAIM, not a
+    //     fact, exactly like `flow_source` is (see the Flow block below):
+    //     executePlaySpell is reachable with hand-built intents — agents, the
+    //     OpenSpiel bridge, replays — so the discount is RE-EARNED here
+    //     against live state, never trusted. The battlefield's flag alone is
+    //     not enough: the play must actually have an eligible friendly unit
+    //     to choose there, or it would pay [A] less for a condition it cannot
+    //     meet (pickTarget filters to nothing and the spell fizzles — at a
+    //     discount). Anything else fails LOUDLY and executes nothing;
     //   • otherwise, whatever this play's already-chosen (play-time) targets
     //     earn — a friendly unit at a flagged battlefield.
     int tomb_power_discount = 0;
     if (intent.target_battlefield_restriction.has_value()) {
+        const BattlefieldId rbf = *intent.target_battlefield_restriction;
+        int flag = 0;
         for (const auto& b : state_.battlefields) {
-            if (b.id != *intent.target_battlefield_restriction) continue;
-            tomb_power_discount = b.friendly_spell_power_discount;
+            if (b.id != rbf) continue;
+            flag = b.friendly_spell_power_discount;
             break;
         }
+        // The same legal list the generators gated the offer on — the
+        // requirement-level superset of whatever lists the card itself builds
+        // at resolve time, so offer, payment and picker all agree on who is
+        // eligible.
+        const Card* restricted_card = (card.card_def_id != kInvalidId)
+            ? card_registry_.get(card.card_def_id) : nullptr;
+        const auto restricted_legal = restricted_card
+            ? restricted_card->enumerateLegalTargets(state_, intent.player)
+            : std::vector<GameObjectId>{};
+        if (flag <= 0 ||
+            !hasFriendlyUnitTargetAt(state_, intent.player, restricted_legal,
+                                      rbf)) {
+            // logWarn, not logTrace: an illegal intent reaching execution must
+            // be visible in an ordinary run (the Flow rejection below says the
+            // same thing at more length).
+            events_.logWarn("TOMB: illegal restricted intent for " + card.name +
+                            " — no eligible friendly unit at battlefield " +
+                            std::to_string(rbf));
+            return;
+        }
+        tomb_power_discount = flag;
     } else {
         tomb_power_discount =
             tombDiscountForTargets(state_, intent.player, intent.targets);
@@ -1663,6 +1696,11 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // additional costs); otherwise the normal play_source-aware path runs.
     bool paid_via_grant = false;
     if (!paid_via_flow && intent.play_source == Intent::PlaySource::Trash) {
+        // Sandswept Tomb's discount is deliberately NOT applied to a
+        // trash-replay grant: the grant is a flat override cost of its own
+        // (Death from Below's "play a spell from your trash for [1]"), and
+        // generateTrashReplayActions emits no restricted offers, so offer and
+        // payment stay in step. Neither deck in scope contains such a grant.
         paid_via_grant = payTrashReplayGrant(intent.player, intent.card);
     }
     if (!paid_via_flow && !paid_via_grant) {
@@ -3088,9 +3126,16 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             // (Sandswept Tomb, 792). Zero for a target-free offer and for a
             // resolve-time-target offer — the restricted variants emitted
             // below carry their own, committed, discount.
-            StagedPowerDiscount stage(state_, player,
-                tombDiscountForTargets(state_, player, play.targets));
-            if (!canAfford(player, card_id)) return;
+            //
+            // When no offer for this card could earn anything (`tomb_best`
+            // is 0 — the overwhelmingly common case, and the MCTS hot path)
+            // the per-offer price is provably the gate above, which already
+            // passed: skip the repeat canAfford entirely.
+            if (tomb_best > 0) {
+                StagedPowerDiscount stage(state_, player,
+                    tombDiscountForTargets(state_, player, play.targets));
+                if (!canAfford(player, card_id)) return;
+            }
             actions.push_back(play);
         };
         constexpr int kSingleEmit = 0;  // sentinel arg for emit() readability
@@ -3123,19 +3168,17 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             // target means the offer cannot know whether the discount's
             // condition will be met, so the generator emits a SECOND intent
             // per flagged battlefield where a legal friendly-unit target
-            // exists: taking it commits the play to choosing there
-            // (Card::pickTarget filters the resolve-time list to that
-            // battlefield) and prices it with the discount.
+            // exists: taking it commits the play to choosing there and prices
+            // it with the discount. Both pick shapes are covered —
+            // Card::pickTarget narrows its one list, Card::pickTargetPair
+            // applies the caller-agnostic two-branch narrowing documented
+            // there — so a pair-pick spell (Star-Crossed, Switcheroo) earns
+            // the discount exactly like a single-pick one.
             //
-            // Single-target picks only. A PAIR pick resolves through
-            // Card::pickTargetPair, which has no restriction filter — with 20+
-            // callers building their two lists in card-specific ways there is
-            // no generic filter that both enforces the commitment and leaves
-            // every one of them correct. Emitting a restricted offer there
-            // would hand out a discount the play need not earn, so pair-pick
-            // spells are simply never offered one (they pay full price).
-            if (spell_card->needsPlayTimeTarget() &&
-                !spell_card->needsPlayTimeTargetPair() && card_power_cost > 0) {
+            // Eligibility is checked against the requirement-level legal list,
+            // the superset of whatever lists the card builds at resolve time;
+            // executePlaySpell re-checks the very same condition before paying.
+            if (card_power_cost > 0) {
                 for (const auto& bf : state_.battlefields) {
                     if (bf.friendly_spell_power_discount <= 0) continue;
                     if (!hasFriendlyUnitTargetAt(state_, player, legal_targets,
@@ -3322,16 +3365,17 @@ void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
 
             // Cheap up-front gate, priced at the BEST discount any offer for
             // this cost could earn; each emission below re-prices with the
-            // discount IT earns.
-            if (!flowAffordable(discountedPower(
-                    bestTombDiscount(state_, player, offer.cost.power,
-                                      legal_targets))))
-                continue;
+            // discount IT earns — unless nothing here can earn one, in which
+            // case the gate's answer is provably the per-offer answer.
+            const int flow_tomb_best =
+                bestTombDiscount(state_, player, offer.cost.power, legal_targets);
+            if (!flowAffordable(discountedPower(flow_tomb_best))) continue;
 
             auto emitPlay = [&](std::vector<GameObjectId> tgts,
                                  std::optional<BattlefieldId> restriction,
                                  int discount) {
-                if (!flowAffordable(discountedPower(discount))) return;
+                if (flow_tomb_best > 0 && !flowAffordable(discountedPower(discount)))
+                    return;
                 Intent play;
                 play.type = intent_type;
                 play.player = player;
@@ -3353,11 +3397,9 @@ void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
                  spell_card->needsPlayTimeTargetPair())) {
                 make({});                              // agent picks at resolve
                 // Sandswept Tomb (792) — the restricted flow offer, the same
-                // commitment the hand generator emits (see generateSpellActions
-                // for why pair picks are excluded).
-                if (spell_card->needsPlayTimeTarget() &&
-                    !spell_card->needsPlayTimeTargetPair() &&
-                    offer.cost.power > 0) {
+                // commitment (and the same eligibility rule) the hand
+                // generator emits; see generateSpellActions.
+                if (offer.cost.power > 0) {
                     for (const auto& bf : state_.battlefields) {
                         if (bf.friendly_spell_power_discount <= 0) continue;
                         if (!hasFriendlyUnitTargetAt(state_, player,

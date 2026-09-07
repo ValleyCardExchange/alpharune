@@ -245,7 +245,7 @@ TEST_F(SandsweptTombTest, RideTheWindOfferedTwiceWithFriendlyUnitAtTheTomb) {
     EXPECT_EQ(restricted, 1);
 }
 
-TEST_F(SandsweptTombTest, RestrictedIntentIsAffordableWithOneFewerMatchingRune) {
+TEST_F(SandsweptTombTest, RestrictedIntentIsTheOnlyOfferWhenOnlyTheDiscountedCostIsPayable) {
     GameEngine engine(card_db, events, card_registry);
     FirstChoiceAgent agent1, agent2;
     engine.testHook_setAgents(&agent1, &agent2);
@@ -285,6 +285,10 @@ namespace {
 class TargetPromptRecorder : public AgentInterface {
 public:
     std::vector<std::vector<GameObjectId>> unit_prompts;
+    /// Objects to pick when they appear among the options (used to drive a
+    /// pair pick down a specific branch). Anything else takes option 0.
+    std::vector<GameObjectId> prefer;
+
     Intent selectAction(const GameState& s,
                         const std::vector<Intent>& legal) override {
         if (!legal.empty() && legal.front().type == IntentType::MakeChoice) {
@@ -300,6 +304,12 @@ public:
                 units.push_back(id);
             }
             if (all_units && !units.empty()) unit_prompts.push_back(units);
+        }
+        for (const auto& i : legal) {
+            if (i.chosen_objects.empty()) continue;
+            if (std::find(prefer.begin(), prefer.end(),
+                          i.chosen_objects.front()) != prefer.end())
+                return i;
         }
         return legal.empty() ? Intent{} : legal.front();
     }
@@ -652,4 +662,248 @@ TEST_F(SandsweptTombTest, PlayTimeTargetOfferIsPricedWithTheDiscountItEarns) {
     EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
         << "and the payment path honours the same discount: nothing recycled.";
     EXPECT_EQ(countExhausted(s, P1), 3);
+}
+
+// ─── A restriction is a CLAIM, not a fact (review fix round 1, Important #1) ──
+
+TEST_F(SandsweptTombTest, HandBuiltRestrictionWithNoEligibleUnitIsRejected) {
+    GameEngine engine(card_db, events, card_registry);
+    TargetPromptRecorder agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    // The only friendly unit is at the OTHER battlefield, so no restricted
+    // offer is generated — but an agent, a replay or the OpenSpiel bridge can
+    // still hand executePlaySpell an intent that claims one.
+    addUnitIn(s, P1, /*at_bf=*/1, "Far Unit");
+    auto spell = addToZoneIn(s, P1, kRideTheWind, ZoneType::Hand);
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Chaos);
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 1u) << "sanity: no restricted offer is generated";
+    Intent forged = offers[0];
+    forged.target_battlefield_restriction = 0;   // the Tomb — but nothing to choose there
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    engine.testHook_executeIntent(forged);
+
+    EXPECT_TRUE(played.empty())
+        << "The claim must be re-checked against live state and REJECTED, the "
+           "way the Flow claim is forty lines later — the battlefield flag "
+           "alone does not earn the discount, an eligible friendly unit to "
+           "choose there does.";
+    EXPECT_EQ(countReady(s, P1), 3);
+    EXPECT_EQ(countExhausted(s, P1), 0);
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "Nothing may be paid on the rejected path.";
+    const auto& hand = s.player(P1).hand;
+    EXPECT_NE(std::find(hand.begin(), hand.end(), spell), hand.end())
+        << "and nothing may be mutated: the spell stays in hand.";
+    EXPECT_TRUE(agent1.unit_prompts.empty());
+}
+
+TEST_F(SandsweptTombTest, RestrictedPlayKeepsItsDiscountWhenTheTombUnitDiesFirst) {
+    // CR: a cost is locked in when the play is made. A LEGITIMATE restricted
+    // play that loses its Tomb unit between payment and resolution therefore
+    // keeps the discount and simply fizzles — the same outcome as any spell
+    // whose only target vanishes. Documented here so the re-validation added
+    // for the forged-intent case above is never "fixed" into a refund.
+    GameEngine engine(card_db, events, card_registry);
+    TargetPromptRecorder agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    auto tomb_unit = addUnitIn(s, P1, /*at_bf=*/0, "Tomb Unit");
+    auto far_unit  = addUnitIn(s, P1, /*at_bf=*/1, "Far Unit");
+    s.getObject(far_unit).is_exhausted = true;
+    auto spell = addToZoneIn(s, P1, kRideTheWind, ZoneType::Hand);
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Chaos);
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 2u);
+    Intent restricted;
+    for (const auto& o : offers)
+        if (o.target_battlefield_restriction.has_value()) restricted = o;
+    ASSERT_TRUE(restricted.target_battlefield_restriction.has_value());
+
+    // Kill the Tomb unit the instant the spell is played — after the cost is
+    // paid, before the chain resolves it.
+    auto conn = events.on_card_played.connect([&](const CardPlayedEvent&) {
+        auto& u = s.getObject(tomb_unit);
+        u.location.reset();
+        u.zone = ZoneType::Trash;
+        s.player(P1).trash.push_back(tomb_unit);
+    });
+
+    engine.testHook_executeIntent(restricted);
+
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "The discounted cost was locked in at play — no rune is recycled "
+           "after the fact.";
+    EXPECT_EQ(countExhausted(s, P1), 2);
+    EXPECT_TRUE(agent1.unit_prompts.empty())
+        << "Nothing is left to choose at the Tomb, so no target choice is "
+           "published — the spell fizzles.";
+    EXPECT_TRUE(s.getObject(far_unit).isAtBattlefield())
+        << "and the commitment holds to the end: the unit at the OTHER "
+           "battlefield is never offered as a fallback.";
+    EXPECT_TRUE(s.getObject(far_unit).is_exhausted);
+}
+
+// ─── Pair-pick spells (review fix round 1, Important #2 — controller ruling) ──
+//
+// Star-Crossed (690) and Switcheroo (466) are both in Tyler's deck and both
+// choose their two units at RESOLVE time through Card::pickTargetPair. The
+// commitment is enforced caller-agnostically: at the A step the list is
+// narrowed to {a : a is a friendly unit at the Tomb} ∪ {a : some b reachable
+// from a is}, and at the B step B is narrowed to friendly-at-Tomb unless the
+// chosen A already satisfies it. Neither card knows any of this.
+
+TEST_F(SandsweptTombTest, StarCrossedRestrictedOfferNarrowsTheFriendlyList) {
+    constexpr CardDefId kStarCrossed = 690;   // 3E + 1 [Chaos], A = friendly, B = enemy
+
+    GameEngine engine(card_db, events, card_registry);
+    TargetPromptRecorder agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    auto tomb_friendly = addUnitIn(s, P1, /*at_bf=*/0, "Friendly At Tomb");
+    auto far_friendly  = addUnitIn(s, P1, /*at_bf=*/1, "Friendly Elsewhere");
+    auto enemy         = addUnitIn(s, P2, /*at_bf=*/1, "Enemy");
+    auto spell = addToZoneIn(s, P1, kStarCrossed, ZoneType::Hand);
+
+    // 3 ORDER runes: the [3] energy is covered, the [1] Chaos power is not —
+    // so only the discounted, restricted play can be offered at all.
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Order);
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 1u)
+        << "A pair-pick spell that can choose a friendly unit at the Tomb must "
+           "get the restricted offer too — Star-Crossed and Switcheroo are in "
+           "the deck this branch exists for.";
+    ASSERT_TRUE(offers[0].target_battlefield_restriction.has_value());
+    EXPECT_EQ(*offers[0].target_battlefield_restriction, 0u);
+
+    engine.testHook_executeIntent(offers[0]);
+
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "the discount is charged: nothing recycled for the [1] power";
+    EXPECT_EQ(countExhausted(s, P1), 3);
+    ASSERT_EQ(agent1.unit_prompts.size(), 2u)
+        << "Star-Crossed publishes two picks: the friendly, then the enemy.";
+    EXPECT_EQ(agent1.unit_prompts[0], std::vector<GameObjectId>{tomb_friendly})
+        << "The A list is narrowed to friendly units at the Tomb — the "
+           "friendly unit elsewhere may not be chosen under the commitment.";
+    EXPECT_EQ(agent1.unit_prompts[1], std::vector<GameObjectId>{enemy})
+        << "The B list is left alone once A already satisfies the commitment: "
+           "the enemy need not stand at the Tomb.";
+    EXPECT_EQ(s.getObject(tomb_friendly).zone, ZoneType::Hand);
+    EXPECT_EQ(s.getObject(enemy).zone, ZoneType::Hand);
+    EXPECT_TRUE(s.getObject(far_friendly).isAtBattlefield());
+}
+
+TEST_F(SandsweptTombTest, SwitcherooGetsNoRestrictedOfferWithOnlyEnemiesAtTheTomb) {
+    constexpr CardDefId kSwitcheroo = 466;   // 2E + 2 [Chaos], A = any unit at a BF
+
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    // Only ENEMY units stand at the Tomb; P1's own units are elsewhere. There
+    // is no friendly unit "here" for the spell to choose, so nothing earns the
+    // discount — Switcheroo's A list contains Tomb units, but they are the
+    // wrong player's.
+    addUnitIn(s, P2, /*at_bf=*/0, "Enemy At Tomb A");
+    addUnitIn(s, P2, /*at_bf=*/0, "Enemy At Tomb B");
+    addUnitIn(s, P1, /*at_bf=*/1, "Friendly Elsewhere A");
+    addUnitIn(s, P1, /*at_bf=*/1, "Friendly Elsewhere B");
+    auto spell = addToZoneIn(s, P1, kSwitcheroo, ZoneType::Hand);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Chaos);
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 1u)
+        << "Eligibility is 'a FRIENDLY unit at the Tomb', not 'a unit at the "
+           "Tomb' — with only enemies there, no restricted offer may appear.";
+    EXPECT_FALSE(offers[0].target_battlefield_restriction.has_value());
+}
+
+TEST_F(SandsweptTombTest, SwitcherooRestrictedPlayNarrowsTheSecondPickWhenTheFirstIsEnemy) {
+    constexpr CardDefId kSwitcheroo = 466;
+
+    GameEngine engine(card_db, events, card_registry);
+    TargetPromptRecorder agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    // At the Tomb: two enemies and one friendly. Switcheroo's B list is "the
+    // other units at A's battlefield", so picking an enemy A leaves both the
+    // other enemy AND the friendly reachable — exactly the case where B must
+    // be narrowed for the commitment to mean anything.
+    auto enemy_a  = addUnitIn(s, P2, /*at_bf=*/0, "Enemy At Tomb A");
+    auto enemy_b  = addUnitIn(s, P2, /*at_bf=*/0, "Enemy At Tomb B");
+    auto friendly = addUnitIn(s, P1, /*at_bf=*/0, "Friendly At Tomb");
+    auto far_friendly = addUnitIn(s, P1, /*at_bf=*/1, "Friendly Elsewhere");
+    auto far_enemy    = addUnitIn(s, P2, /*at_bf=*/1, "Enemy Elsewhere");
+    auto spell = addToZoneIn(s, P1, kSwitcheroo, ZoneType::Hand);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Chaos);
+
+    agent1.prefer = {enemy_a};   // drive the A pick down the enemy branch
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 2u) << "normal + restricted";
+    Intent restricted;
+    for (const auto& o : offers)
+        if (o.target_battlefield_restriction.has_value()) restricted = o;
+    ASSERT_TRUE(restricted.target_battlefield_restriction.has_value());
+
+    engine.testHook_executeIntent(restricted);
+
+    ASSERT_EQ(agent1.unit_prompts.size(), 2u);
+
+    // A: kept if it IS a friendly-at-Tomb, or if one is reachable as its B.
+    std::vector<GameObjectId> a_list = agent1.unit_prompts[0];
+    std::sort(a_list.begin(), a_list.end());
+    std::vector<GameObjectId> a_want = {enemy_a, enemy_b, friendly};
+    std::sort(a_want.begin(), a_want.end());
+    EXPECT_EQ(a_list, a_want)
+        << "The A list keeps the friendly unit at the Tomb and the two enemies "
+           "standing next to it (each can still reach that friendly as its "
+           "second pick), and drops the units at the other battlefield, from "
+           "which the commitment can never be met.";
+    EXPECT_EQ(std::find(a_list.begin(), a_list.end(), far_friendly), a_list.end());
+    EXPECT_EQ(std::find(a_list.begin(), a_list.end(), far_enemy), a_list.end());
+
+    // B: A was an enemy, so the commitment is still unmet — B must be narrowed
+    // to the friendly unit at the Tomb, not merely to "units at A's BF".
+    EXPECT_EQ(agent1.unit_prompts[1], std::vector<GameObjectId>{friendly})
+        << "With an enemy chosen first, the second pick is the only chance to "
+           "meet the condition the discount was paid for: the other enemy at "
+           "the Tomb may not be offered.";
+
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 1u)
+        << "Switcheroo costs [2] power; the Tomb pays one, so exactly one "
+           "Chaos rune is recycled.";
 }

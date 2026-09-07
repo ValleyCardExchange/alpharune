@@ -388,6 +388,60 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
     }
     auto& ri = *ri_opt;
 
+    // ── Sandswept Tomb (792): the restricted play's commitment, for a PAIR ──
+    //
+    // The single-pick case (Card::pickTarget) just narrows its one list. A
+    // pair is harder: the commitment is "at least ONE of the two chosen units
+    // is a friendly unit at the named battlefield", and the twenty-odd callers
+    // build their A and B lists in card-specific ways — for Star-Crossed A is
+    // the friendly list, for Switcheroo A is every unit at any battlefield.
+    // Narrowing both lists would be wrong (it would force an ENEMY pick to
+    // stand at the Tomb too); narrowing only A would let a card whose friendly
+    // units live in B keep the discount for free.
+    //
+    // So the rule is caller-agnostic and two-branched, and needs no per-card
+    // knowledge:
+    //   • A keeps a candidate that either IS a friendly unit at the
+    //     battlefield, or can still REACH one through its own B list. Anything
+    //     from which the commitment can never be met is dropped.
+    //   • B is left completely alone when the chosen A already satisfies the
+    //     commitment; otherwise B is narrowed to friendly units at the
+    //     battlefield — the second pick is then the only chance to meet it.
+    // Either way, a completed pair contains a friendly unit at that
+    // battlefield. Empty lists fall through to the existing
+    // TGT_PAIR_NOT_OFFERED branches, exactly like a target that vanished.
+    const bool tomb_restricted = ri.target_battlefield_restriction.has_value();
+    auto friendlyAtRestrictedBf = [&](GameObjectId id) {
+        if (!tomb_restricted) return false;
+        if (!ctx.state.objectExists(id)) return false;
+        const auto& o = ctx.state.getObject(id);
+        if (!o.isUnit() || o.controller != ctx.controller) return false;
+        auto at = o.battlefieldId();
+        return at.has_value() && *at == *ri.target_battlefield_restriction;
+    };
+    std::vector<GameObjectId> restricted_a;
+    const std::vector<GameObjectId>* a_source = &legal_a;
+    if (tomb_restricted) {
+        for (auto a : legal_a) {
+            if (friendlyAtRestrictedBf(a)) { restricted_a.push_back(a); continue; }
+            for (auto b : legal_b_fn(a)) {
+                if (!friendlyAtRestrictedBf(b)) continue;
+                restricted_a.push_back(a);
+                break;
+            }
+        }
+        a_source = &restricted_a;
+    }
+    const std::vector<GameObjectId>& legal_a_use = *a_source;
+    auto legalB = [&](GameObjectId a) {
+        auto lb = legal_b_fn(a);
+        if (!tomb_restricted || friendlyAtRestrictedBf(a)) return lb;
+        std::vector<GameObjectId> out;
+        for (auto b : lb)
+            if (friendlyAtRestrictedBf(b)) out.push_back(b);
+        return out;
+    };
+
     // resume_point reservations:
     //   9  = publish first target
     //   10 = consume first target
@@ -402,7 +456,7 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
 
     // ── Step 1: publish first target ──
     if (ri.resume_point == 9) {
-        if (legal_a.empty()) {
+        if (legal_a_use.empty()) {
             ctx.events.logTrace("TGT_PAIR_NOT_OFFERED: " + label +
                                  " (no legal first targets at resolve time)");
             ri.resume_data[3] = static_cast<int32_t>(kInvalidId);
@@ -414,9 +468,9 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
         // target — the agent records the decision (engine-wide rule).
         {
             std::vector<Intent> options;
-            options.reserve(legal_a.size());
+            options.reserve(legal_a_use.size());
             std::string summary;
-            for (auto t : legal_a) {
+            for (auto t : legal_a_use) {
                 Intent i;
                 i.type = IntentType::MakeChoice;
                 i.player = ctx.controller;
@@ -437,7 +491,7 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
 
     if (ri.resume_point == 10) {
         auto picked = ctx.executor.takeChoice();
-        GameObjectId a = legal_a.empty() ? kInvalidId : legal_a.front();
+        GameObjectId a = legal_a_use.empty() ? kInvalidId : legal_a_use.front();
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             a = picked->chosen_objects.front();
         }
@@ -453,7 +507,7 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
     // ── Step 2: publish second target, filtered by picked_a ──
     if (ri.resume_point == 11) {
         GameObjectId a = static_cast<GameObjectId>(ri.resume_data[3]);
-        auto legal_b = legal_b_fn(a);
+        auto legal_b = legalB(a);
         if (legal_b.empty()) {
             ctx.events.logTrace("TGT_PAIR_NOT_OFFERED: " + label +
                                  " (no legal second targets after A picked)");
@@ -487,7 +541,7 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
     if (ri.resume_point == 12) {
         GameObjectId a = static_cast<GameObjectId>(ri.resume_data[3]);
         auto picked = ctx.executor.takeChoice();
-        auto legal_b = legal_b_fn(a);
+        auto legal_b = legalB(a);
         GameObjectId b = legal_b.empty() ? kInvalidId : legal_b.front();
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             b = picked->chosen_objects.front();
