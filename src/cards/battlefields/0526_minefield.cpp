@@ -18,18 +18,14 @@ public:
     const CardDef& def() const override { return def_; }
     TriggerType triggerType() const override { return TriggerType::WhenYouConquerHere; }
     void onTrigger(CardContext& ctx, const std::vector<GameObjectId>& /*targets*/) override {
-        auto& ps = ctx.state.player(ctx.controller);
-        for (int i = 0; i < 2 && !ps.main_deck.empty(); ++i) {
-            auto cid = ps.main_deck.back();
-            ps.main_deck.pop_back();
-            if (ctx.state.objectExists(cid)) {
-                auto& obj = ctx.state.getObject(cid);
-                obj.zone = ZoneType::Trash;
-                obj.location = std::nullopt;
-                ps.trash.push_back(cid);
-            }
-        }
-        ctx.events.logTrace("MINEFIELD: conquer -> top 2 of Main Deck to trash");
+        // Putting cards from the top of the Main Deck into the trash IS Burn
+        // (CR 440), so this goes through the shared primitive rather than a
+        // local loop: running out of deck mid-burn must Burn Out (CR 431.2 —
+        // recycle the trash into the deck, opponent gains a point) and then
+        // keep burning off the reshuffled deck. The hand-rolled loop this
+        // replaces simply stopped at an empty deck.
+        ctx.executor.burnCards(ctx.controller, 2);
+        ctx.events.logTrace("MINEFIELD: conquer -> burn 2");
     }
 private:
     const CardDef def_ = [] {
