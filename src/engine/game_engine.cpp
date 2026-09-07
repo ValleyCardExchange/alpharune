@@ -1176,6 +1176,21 @@ void GameEngine::executeIntent(const Intent& intent) {
                 int red = cost_card->activationCostReduction(state_, intent.player, idx);
                 if (red > 0) act_cost.energy = std::max(0, act_cost.energy - red);
             }
+            // CR 828 — the disempower component can only be paid by a source
+            // that IS Empowered. The action generators gate on this, but
+            // executeIntent is reachable with hand-built intents (agents, the
+            // OpenSpiel bridge, replays), so re-validate before ANYTHING is
+            // paid: disempowerObject no-ops on a non-empowered source, so the
+            // old order exhausted the source and spent its energy for an
+            // activation whose cost was never actually paid. Rejected LOUDLY
+            // (logWarn, not logTrace — Trace is suppressed unless a run asks
+            // for it) with nothing paid and no chain item created.
+            if (act_cost.disempower_self && !source.is_empowered) {
+                events_.logWarn("ACTIVATE_COST: illegal activation of " +
+                                source.name + " — the [Disempower] cost "
+                                "requires an Empowered source");
+                break;
+            }
             if (act_cost.exhaust) {
                 source.is_exhausted = true;
                 events_.emit(ObjectStateChangedEvent{intent.ability_source, "exhausted"});

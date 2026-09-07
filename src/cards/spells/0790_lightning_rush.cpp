@@ -42,7 +42,10 @@ public:
             for (int i = 0; i < actual; ++i) {
                 auto cid = ps.main_deck.back();
                 ps.main_deck.pop_back();
-                ri.resume_data.push_back(static_cast<int32_t>(cid));  // index 3+i
+                // index 3+i. resume_data is an int32 scratchpad and
+                // GameObjectId is uint32_t: ids above INT32_MAX would wrap,
+                // which the engine's sequential id allocator never reaches.
+                ri.resume_data.push_back(static_cast<int32_t>(cid));
                 if (ctx.state.objectExists(cid)) {
                     auto& obj = ctx.state.getObject(cid);
                     ctx.events.logTrace("  LOOKED AT: " + obj.name + " (id=" +

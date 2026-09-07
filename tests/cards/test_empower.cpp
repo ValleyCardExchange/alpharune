@@ -245,4 +245,62 @@ TEST_F(EmpowerTest, DisempowerSelfCostGatesAndPaysOnActivation) {
            "exhaust component";
 }
 
+// ─── The disempower cost is re-validated at execution (review finding #6) ──
+//
+// The action generator gates a disempower_self ability on the source being
+// empowered, but executeIntent is reachable with hand-built intents — agents,
+// the OpenSpiel bridge, replays. It used to pay the cost's other components
+// (exhaust, energy) and then call disempowerObject, which no-ops on a
+// non-empowered source: the ability got activated for free. CR 828 — a cost
+// that cannot be paid is not paid, and the activation does not happen.
+
+TEST_F(EmpowerTest, DisempowerSelfActivationIsRejectedWhenTheSourceIsNotEmpowered) {
+    constexpr CardDefId kTestLegendId = 900;
+    card_registry.registerCard(kTestLegendId, std::make_unique<EmpowerCostTestLegend>());
+
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    auto& s = engine.mutableState();
+    s.mode             = ModeOfPlay{};
+    s.players[0].id    = P1;
+    s.players[1].id    = P2;
+    s.turn.turn_player = P1;
+    s.turn.phase       = TurnPhase::MainPhase;
+    s.turn.ns_state    = NeutralShowdownState::Neutral;
+    s.turn.oc_state    = OpenClosedState::Open;
+    BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+    BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+
+    auto legend = s.createObject();
+    auto& leg = s.getObject(legend);
+    leg.owner        = P1;
+    leg.controller   = P1;
+    leg.card_def_id  = kTestLegendId;
+    leg.name         = "Empower Cost Test Legend";
+    leg.card_type    = CardType::Legend;
+    leg.zone         = ZoneType::LegendZone;
+    leg.is_exhausted = false;
+    leg.is_empowered = false;   // the cost cannot be paid
+    s.player(P1).legend_zone = legend;
+
+    Intent activate;
+    activate.type = IntentType::ActivateAbility;
+    activate.player = P1;
+    activate.ability_source = legend;
+    activate.ability_index = 0;
+
+    engine.testHook_executeIntent(activate);
+
+    EXPECT_FALSE(s.getObject(legend).is_exhausted)
+        << "The disempower component of the cost cannot be paid, so NOTHING "
+           "is paid — the exhaust component must not be charged either.";
+    EXPECT_FALSE(s.getObject(legend).is_empowered)
+        << "sanity: the source was never empowered";
+    EXPECT_FALSE(s.chain.exists())
+        << "An activation whose cost cannot be paid does not happen: no chain "
+           "item may be created for it.";
+}
+
 }  // namespace

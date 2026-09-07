@@ -350,6 +350,12 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
         auto picked = ctx.executor.takeChoice();
         GameObjectId t = legal.empty()
             ? kInvalidId : legal.front();
+        // TODO: the answer is taken on trust — it is not re-checked against
+        // `legal`. Sandswept Tomb's [A] discount is charged for a COMMITMENT
+        // to choose at the restricted battlefield, and `legal` above is what
+        // enforces it; an agent that answers off-list would keep the discount
+        // and dodge the commitment. Every in-tree agent answers from the
+        // published list, so this is a trust boundary, not a live bug.
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             t = picked->chosen_objects.front();
         }
@@ -492,6 +498,12 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
     if (ri.resume_point == 10) {
         auto picked = ctx.executor.takeChoice();
         GameObjectId a = legal_a_use.empty() ? kInvalidId : legal_a_use.front();
+        // TODO: the answer is taken on trust — it is not re-checked against
+        // `legal_a_use`, which is where Sandswept Tomb's restricted-offer
+        // commitment lives for the A pick (the discount was already paid for
+        // it). An agent answering off-list would keep the discount and dodge
+        // the commitment. Trust boundary, not a live bug: every in-tree agent
+        // answers from the published list.
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             a = picked->chosen_objects.front();
         }
@@ -543,6 +555,12 @@ std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
         auto picked = ctx.executor.takeChoice();
         auto legal_b = legalB(a);
         GameObjectId b = legal_b.empty() ? kInvalidId : legal_b.front();
+        // TODO: the answer is taken on trust — it is not re-checked against
+        // `legal_b`, which is where Sandswept Tomb's commitment lands when
+        // the A pick did not itself satisfy it (the narrowing that made the
+        // discount honest). An agent answering off-list would keep the
+        // discount and dodge the commitment. Trust boundary, not a live bug:
+        // every in-tree agent answers from the published list.
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             b = picked->chosen_objects.front();
         }
