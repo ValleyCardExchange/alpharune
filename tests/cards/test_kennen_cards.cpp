@@ -326,5 +326,158 @@ TEST_F(KennenCardsTest, Kennen_Conquer_NoSpellInTrash_ChangesNothing) {
     EXPECT_TRUE(inTrash(P1, unit_in_trash));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Task 8 — 788 Heart of the Tempest
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Test #17 — empowers on trash play; action gives Assault 2 that expires
+
+TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssaultThatExpires) {
+    // Real trash-replay path (The Harrowing, id 198) driven end-to-end
+    // through the engine — mirrors test_play_from_non_hand.cpp test #4 —
+    // so the resulting WhenYouPlayFromNonHand trigger (queued onto the
+    // chain by TriggerManager::onCardPlayed) is actually drained by the
+    // same runChain() call executePlaySpell makes, instead of dangling
+    // unresolved the way a bare EffectExecutor::playIgnoringCost call
+    // (with no enclosing intent) would leave it.
+    constexpr CardDefId kTheHarrowingSpell2 = 198;  // 6E + 2 Chaos P
+
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    auto& s = engine.mutableState();
+    s.mode = ModeOfPlay{};
+    s.players[0].id = P1;
+    s.players[1].id = P2;
+    s.turn.turn_player = P1;
+    s.turn.turn_number = 5;
+    s.turn.phase = TurnPhase::MainPhase;
+    s.turn.ns_state = NeutralShowdownState::Neutral;
+    s.turn.oc_state = OpenClosedState::Open;
+    BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+    BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+
+    auto legend_id = s.createObject();
+    {
+        auto& leg = s.getObject(legend_id);
+        leg.owner = P1; leg.controller = P1;
+        leg.card_def_id = kHeartOfTheTempest;
+        leg.name = "Heart of the Tempest";
+        leg.card_type = CardType::Legend;
+        leg.zone = ZoneType::LegendZone;
+    }
+    s.player(P1).legend_zone = legend_id;
+    ASSERT_FALSE(s.getObject(legend_id).is_empowered);
+
+    // A unit sitting in P1's trash — The Harrowing's target, replayed via
+    // playIgnoringCost. That replay's CardPlayedEvent (play_source=Trash)
+    // is what fires WhenYouPlayFromNonHand on the legend.
+    auto unit_in_trash = s.createObject();
+    {
+        auto& u = s.getObject(unit_in_trash);
+        u.owner = P1; u.controller = P1;
+        u.card_type = CardType::Unit;
+        u.name = "Trashed Test Unit";
+        u.base_might = 1; u.current_might = 1;
+        u.zone = ZoneType::Trash;
+    }
+    s.player(P1).trash.push_back(unit_in_trash);
+
+    // 10 ready Chaos runes — affords The Harrowing (6E + 2 Chaos P). Built
+    // directly on `s` (engine.mutableState()) — the fixture's addRune/
+    // addToHand operate on the FIXTURE's separate `state` member, not the
+    // engine's own state, so this mirrors this file's Kennen action test
+    // above and test_play_from_non_hand.cpp's local helpers.
+    for (int i = 0; i < 10; ++i) {
+        auto rid = s.createObject();
+        auto& r = s.getObject(rid);
+        r.owner = P1; r.controller = P1;
+        r.card_type = CardType::Rune;
+        r.name = "Test Rune";
+        r.domains = {Domain::Chaos};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{P1};
+        r.is_exhausted = false;
+    }
+    auto harrowing_id = s.createObject();
+    {
+        auto& h = s.getObject(harrowing_id);
+        h.owner = P1; h.controller = P1;
+        h.card_def_id = kTheHarrowingSpell2;
+        const auto& hdef = card_db.get(kTheHarrowingSpell2);
+        h.name = hdef.name;
+        h.card_type = hdef.card_type;
+        h.domains = hdef.domains;
+        h.zone = ZoneType::Hand;
+    }
+    s.player(P1).hand.push_back(harrowing_id);
+
+    auto actions = engine.generateLegalActions();
+    Intent play;
+    bool found_play = false;
+    for (auto& a : actions) {
+        if (a.type == IntentType::PlayCard && a.card == harrowing_id) {
+            play = a; found_play = true; break;
+        }
+    }
+    ASSERT_TRUE(found_play)
+        << "The Harrowing must be a legal hand play with 10 ready Chaos runes.";
+    engine.testHook_executeIntent(play);
+
+    ASSERT_TRUE(s.objectExists(legend_id));
+    EXPECT_TRUE(s.getObject(legend_id).is_empowered)
+        << "Heart of the Tempest must become empowered when a card is "
+           "played from anywhere other than hand.";
+
+    // The single legal unit target for the action — FirstChoiceAgent will
+    // pick it deterministically.
+    auto target_unit = s.createObject();
+    {
+        auto& tu = s.getObject(target_unit);
+        tu.owner = P1; tu.controller = P1;
+        tu.card_type = CardType::Unit;
+        tu.name = "Assault Target";
+        tu.base_might = 2; tu.current_might = 2;
+        tu.zone = ZoneType::Base;
+        tu.location = BaseLocation{P1};
+    }
+
+    auto activate_actions = engine.generateLegalActions();
+    Intent activate;
+    bool found = false;
+    for (auto& a : activate_actions) {
+        if (a.type == IntentType::ActivateAbility && a.ability_source == legend_id) {
+            activate = a;
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found)
+        << "Heart of the Tempest's [Action] must be offered while empowered "
+           "and ready, with a legal unit on the board.";
+
+    engine.testHook_executeIntent(activate);
+
+    EXPECT_FALSE(s.getObject(legend_id).is_empowered)
+        << "Activating the action must disempower Heart of the Tempest.";
+    EXPECT_TRUE(s.getObject(legend_id).is_exhausted)
+        << "Activating the action must also exhaust Heart of the Tempest.";
+
+    ASSERT_TRUE(s.objectExists(target_unit));
+    auto& tu = s.getObject(target_unit);
+    EXPECT_TRUE(tu.keywords.has(Keyword::Assault));
+    EXPECT_EQ(tu.assault_value, 2);
+    EXPECT_EQ(tu.temp_assault_value, 2);
+
+    // Expiration: GameEngine::expireTemporaryKeywords is the exact pure
+    // helper the real Expiration Step runs per object — exposed publicly
+    // so card tests can verify the this-turn grant is revoked without
+    // spinning up the full turn loop (per its doc comment).
+    GameEngine::expireTemporaryKeywords(tu, card_db);
+    EXPECT_FALSE(tu.keywords.has(Keyword::Assault))
+        << "Assault 2 must expire at the turn's Expiration Step.";
+}
+
 }  // namespace
 }  // namespace riftbound::test
