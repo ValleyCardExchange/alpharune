@@ -3,6 +3,7 @@
 #include "core/game_state.h"
 #include "core/events.h"
 #include "engine/effect_executor.h"
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,18 +14,97 @@ namespace {
 class LightningRush : public SpellCard {
 public:
     const CardDef& def() const override { return def_; }
+
+    // "Look at the top 3 cards of your Main Deck. You may choose A card
+    // from among them and draw it. Put the rest into your trash." — "may
+    // choose A card" is at most ONE, so this deliberately avoids
+    // EffectExecutor::revealAndChoose (which asks draw-or-skip
+    // independently per revealed card and would let the agent draw all
+    // three). Modelled on Stacked Deck (0183_stacked_deck.cpp): peek the
+    // top up-to-3 once (resume_point < 3, before Card::pickMode claims
+    // resume_points 3-5), stash their ids in resume_data[2..], then
+    // Card::pickMode offers EXACTLY ONE decision — one mode per revealed
+    // card plus a trailing "None" mode (index == the reveal count) — so
+    // "at most one" is structural, not agent discipline.
+    //
+    // "Look AT" is a private look (CR 128.4 / 424.1), NOT a public
+    // Reveal: each peeked card gets its own CardRevealedEvent with
+    // revealed_to_all=false / revealed_to=controller, matching Stacked
+    // Deck and the Vision keyword (trigger_manager.cpp).
     void onResolve(CardContext& ctx, const std::vector<GameObjectId>& /*targets*/) override {
-        // "Look at the top 3 cards of your Main Deck. You may choose a
-        // card from among them and draw it. Put the rest into your
-        // trash." — EffectExecutor::revealAndChoose(rest=Trash) already
-        // implements this exactly: public reveal (CR 424), choose-one-
-        // or-none per revealed card, the chosen card lands in hand as a
-        // real draw, the rest go to trash in revealed order (Kennen spec
-        // §6 / addendum #4). It queries the agent directly and
-        // synchronously (like EffectExecutor::predict), so no pickTarget
-        // / resume machinery is needed here.
-        ctx.executor.revealAndChoose(ctx.controller, 3,
-                                      EffectExecutor::RestDestination::Trash);
+        auto& ri = ctx.state.chain.resuming.value();
+        auto& ps = ctx.state.player(ctx.controller);
+
+        if (ri.resume_point < 3) {
+            int actual = std::min(3, static_cast<int>(ps.main_deck.size()));
+            while (ri.resume_data.size() < 2) ri.resume_data.push_back(0);
+            ri.resume_data.push_back(actual);  // index 2: how many peeked
+            for (int i = 0; i < actual; ++i) {
+                auto cid = ps.main_deck.back();
+                ps.main_deck.pop_back();
+                ri.resume_data.push_back(static_cast<int32_t>(cid));  // index 3+i
+                if (ctx.state.objectExists(cid)) {
+                    auto& obj = ctx.state.getObject(cid);
+                    ctx.events.logTrace("  LOOKED AT: " + obj.name + " (id=" +
+                                         std::to_string(cid) +
+                                         ") — PRIVATE to " + toString(ctx.controller));
+                    ctx.events.emit(CardRevealedEvent{
+                        cid, obj.card_def_id, obj.owner,
+                        /*revealed_to_all=*/false, /*revealed_to=*/ctx.controller,
+                        ZoneType::MainDeck,
+                    });
+                }
+            }
+        }
+
+        int actual = ri.resume_data.size() >= 3
+            ? static_cast<int>(ri.resume_data[2]) : 0;
+        if (actual == 0) return;  // empty deck — nothing to look at
+
+        std::vector<GameObjectId> revealed;
+        revealed.reserve(actual);
+        for (int i = 0; i < actual; ++i)
+            revealed.push_back(static_cast<GameObjectId>(ri.resume_data[3 + i]));
+
+        std::vector<std::string> labels;
+        labels.reserve(actual + 1);
+        for (auto cid : revealed) {
+            labels.push_back(ctx.state.objectExists(cid)
+                ? ctx.state.getObject(cid).name : std::string("?"));
+        }
+        labels.push_back("None");
+
+        int mode = pickMode(ctx, "Lightning Rush: choose a card to draw",
+                             actual + 1, labels);
+        if (mode == -1) return;  // suspended — awaiting agent choice
+        if (mode == -2) return;  // no legal mode (unreachable: actual >= 1)
+
+        GameObjectId drawn = (mode < actual) ? revealed[mode] : kInvalidId;
+
+        int drawn_count = 0;
+        for (auto cid : revealed) {
+            if (!ctx.state.objectExists(cid)) continue;
+            auto& obj = ctx.state.getObject(cid);
+            if (cid == drawn) {
+                obj.zone = ZoneType::Hand;
+                obj.location = std::nullopt;
+                ps.hand.push_back(cid);
+                ++drawn_count;
+                ctx.events.logTrace("LIGHTNING RUSH: drew " + obj.name);
+            } else {
+                obj.zone = ZoneType::Trash;
+                obj.location = std::nullopt;
+                ps.trash.push_back(cid);
+                ctx.events.logTrace("LIGHTNING RUSH: trashed " + obj.name);
+            }
+        }
+        if (drawn_count > 0) {
+            // The chosen card lands in hand AS A DRAW, matching
+            // EffectExecutor::revealAndChoose (effect_executor.cpp) exactly,
+            // so WhenYouDrawACard consumers see it.
+            ps.draws_this_turn += drawn_count;
+            ctx.events.emit(CardsDrawnEvent{ctx.controller, drawn_count});
+        }
     }
 private:
     const CardDef def_ = [] {

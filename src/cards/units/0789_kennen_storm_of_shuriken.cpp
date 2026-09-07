@@ -26,11 +26,16 @@ public:
 
         // WhenIConquer — mandatory: give a spell in the trash Flow equal
         // to its printed cost this turn (CR 829; spec §6 / addendum).
+        // A spell-typed object with no card_def_id (kInvalidId) has no
+        // printed cost to copy, so it's excluded from the candidate list
+        // entirely — never chosen-and-granted a hollow 0/0 Flow (fix
+        // round 1, minor (b)).
         auto& ps = ctx.state.player(ctx.controller);
         std::vector<GameObjectId> spells;
         for (auto cid : ps.trash) {
             if (!ctx.state.objectExists(cid)) continue;
-            if (ctx.state.getObject(cid).card_type == CardType::Spell)
+            auto& obj = ctx.state.getObject(cid);
+            if (obj.card_type == CardType::Spell && obj.card_def_id != kInvalidId)
                 spells.push_back(cid);
         }
         if (spells.empty()) return;
@@ -43,14 +48,14 @@ public:
         if (picked == kInvalidId || !ctx.state.objectExists(picked)) return;
 
         auto& spell = ctx.state.getObject(picked);
-        const CardDef* def = spell.card_def_id != kInvalidId
-            ? &ctx.executor.cardDB().get(spell.card_def_id) : nullptr;
+        // Invariant from the filter above: every candidate has a valid
+        // card_def_id, so this lookup can't miss.
+        const CardDef& def = ctx.executor.cardDB().get(spell.card_def_id);
 
         GameObject::GrantedFlow gf;
-        gf.energy = def ? def->energy_cost : 0;
-        gf.power = def ? def->power_cost : 0;
-        gf.power_domain = (def && !def->domains.empty()) ? def->domains.front()
-                                                            : Domain::Fury;
+        gf.energy = def.energy_cost;
+        gf.power = def.power_cost;
+        gf.power_domain = !def.domains.empty() ? def.domains.front() : Domain::Fury;
         gf.any_domain = false;
         gf.valid_on_turn = ctx.state.turn.turn_number;
         spell.granted_flow = gf;

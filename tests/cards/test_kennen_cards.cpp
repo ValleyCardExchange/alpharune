@@ -326,6 +326,40 @@ TEST_F(KennenCardsTest, Kennen_Conquer_NoSpellInTrash_ChangesNothing) {
     EXPECT_TRUE(inTrash(P1, unit_in_trash));
 }
 
+// ─── Fix round 1, minor (b) — a def-less spell object is EXCLUDED, never
+// granted a hollow 0/0 Flow ─────────────────────────────────────────────
+
+TEST_F(KennenCardsTest, Kennen_Conquer_DefLessSpellObjectInTrash_ExcludedFromCandidates) {
+    // A `CardType::Spell` object with NO card_def_id (kInvalidId) — the
+    // filter must skip it entirely rather than offering it as a pick and
+    // granting it a hollow {energy=0, power=0} Flow.
+    auto fake_spell = state.createObject();
+    {
+        auto& o = state.getObject(fake_spell);
+        o.owner = P1; o.controller = P1;
+        o.card_type = CardType::Spell;
+        o.card_def_id = kInvalidId;
+        o.name = "Def-less Test Spell";
+        o.zone = ZoneType::Trash;
+    }
+    state.player(P1).trash.push_back(fake_spell);
+
+    auto kennen_id = addUnit(P1, kKennenStormOfShuriken, 4);
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    fireTriggerAs(kKennenStormOfShuriken, P1, kennen_id,
+                   TriggerType::WhenIConquer, exec);
+
+    // With the def-less object excluded, the candidate list is empty —
+    // same as "no spell in trash": nothing happens, nothing is granted.
+    EXPECT_FALSE(state.getObject(fake_spell).granted_flow.has_value())
+        << "a def-less trash object must never be granted Flow, hollow or "
+           "otherwise — it must be excluded from the candidate list, not "
+           "chosen-and-given-zero.";
+    ASSERT_EQ(trashSize(P1), 1);
+    EXPECT_TRUE(inTrash(P1, fake_spell));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Task 8 — 788 Heart of the Tempest
 // ═══════════════════════════════════════════════════════════════════════════
@@ -430,8 +464,21 @@ TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssault
         << "Heart of the Tempest must become empowered when a card is "
            "played from anywhere other than hand.";
 
-    // The single legal unit target for the action — FirstChoiceAgent will
-    // pick it deterministically.
+    // The replayed unit stays on the board after The Harrowing resolves —
+    // it would ALSO be a legal Assault target (the ability targets "a
+    // unit", any unit, not just friendly-and-new), which made the
+    // FirstChoiceAgent's pick depend on state.objects' (unordered_map)
+    // iteration order between it and target_unit below. Kill it so
+    // target_unit is provably the ONLY legal target and the assertion
+    // doesn't depend on map ordering.
+    EffectExecutor kill_exec(s, events, card_db, &card_registry);
+    kill_exec.killObject(unit_in_trash);
+    ASSERT_FALSE(s.objectExists(unit_in_trash) &&
+                 s.getObject(unit_in_trash).location.has_value())
+        << "sanity: the replayed unit must actually be off the board now";
+
+    // The ONLY legal unit target for the action — FirstChoiceAgent's pick
+    // is now deterministic.
     auto target_unit = s.createObject();
     {
         auto& tu = s.getObject(target_unit);
@@ -442,6 +489,15 @@ TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssault
         tu.zone = ZoneType::Base;
         tu.location = BaseLocation{P1};
     }
+
+    // Verify determinism directly: exactly one legal unit target exists,
+    // and it's target_unit — not an artifact of iteration order.
+    Card* heart_card = card_registry.get(kHeartOfTheTempest);
+    ASSERT_NE(heart_card, nullptr);
+    auto legal_targets = heart_card->enumerateLegalTargets(s, P1);
+    ASSERT_EQ(legal_targets.size(), 1u)
+        << "target_unit must be the ONLY legal unit target.";
+    EXPECT_EQ(legal_targets[0], target_unit);
 
     auto activate_actions = engine.generateLegalActions();
     Intent activate;
@@ -470,6 +526,28 @@ TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssault
     EXPECT_EQ(tu.assault_value, 2);
     EXPECT_EQ(tu.temp_assault_value, 2);
 
+    // NOTE on the numeric assault_value decrement: the real Expiration
+    // Step's `obj.assault_value -= obj.temp_assault_value` line lives in
+    // GameEngine::doExpirationBody (private, no testHook_ wrapper exists —
+    // e.g. game_engine.cpp, the loop that also calls
+    // expireTemporaryKeywords per object). This test cannot drive that
+    // line without either a full runGame() turn loop (deck/mulligan setup
+    // far beyond this scenario) or a new testHook_, and this fix round's
+    // ruling is explicit: no engine/executor edits. Every other "this
+    // turn" numeric-value test in this suite lives with the same gap —
+    // see test_jhin_deck.cpp's FrigidTouch_DebuffPersistsAcrossDecisionsThisTurn,
+    // whose comment says the debuff "persists until expirationStep" and
+    // stops there, asserting only that it survives recomputeMight() calls,
+    // never that expirationStep clears it. So: `assault_value` staying at
+    // 2 here is a REAL functional gap if unaddressed by the real turn loop
+    // (recomputeMight applies `assault_value` unconditionally whenever
+    // combat_designation == Attacker, regardless of the keyword bit — see
+    // GameObject::recomputeMight, core/game_object.h) — but it is exercised
+    // by every real game via GameEngine::runTurnLoop, just not by this
+    // unit test. Flagged in the fix-round report rather than asserted here
+    // with a hand-rolled arithmetic stand-in, which would only prove
+    // subtraction works, not that the engine calls it.
+
     // Expiration: GameEngine::expireTemporaryKeywords is the exact pure
     // helper the real Expiration Step runs per object — exposed publicly
     // so card tests can verify the this-turn grant is revoked without
@@ -482,32 +560,63 @@ TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssault
 // ═══════════════════════════════════════════════════════════════════════════
 // Task 8 — 790 Lightning Rush
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// Fix round 1: revealAndChoose's per-card draw/skip loop let the agent draw
+// ALL THREE revealed cards ("You MAY choose A card" means at most one). The
+// card now implements its own resumable look-and-choose modelled on Stacked
+// Deck (0183_stacked_deck.cpp) — peek once, then Card::pickMode offers
+// EXACTLY ONE decision covering all N revealed cards + "None" (mode index
+// == N). Driven via the fixture's driveResumable helper (mirrors how
+// test_stacked_deck.cpp drives Stacked Deck), with a `picker` that selects
+// by `chosen_value` (the mode index), not `chosen_objects`.
 
 // ─── Test #18 — draws the second of three revealed; other two to trash ────
 
 TEST_F(KennenCardsTest, LightningRush_DrawsSecondOfThree_OtherTwoToTrashInOrder) {
     // Deck reads [bottom=A, middle=B, top=C]. Revealed order (top to
-    // bottom) is [C, B, A]. "Draws the second" means: skip C, draw B, skip A.
+    // bottom, as the card pops main_deck.back()) is [C, B, A] -> mode
+    // indices 0=C, 1=B, 2=A, 3=None. "Draws the second of three revealed"
+    // = mode 1 (B).
     auto a = addToDeck(P1, 1);
     auto b = addToDeck(P1, 1);
     auto c = addToDeck(P1, 1);
     ASSERT_EQ(state.player(P1).main_deck.back(), c);
     ASSERT_EQ(handSize(P1), 0);
 
-    EffectExecutor exec(state, events, card_db, &card_registry);
-    int call = 0;
-    exec.setAgentQuery([&](PlayerId, const std::vector<Intent>& choices) {
-        // choices = {draw_it, skip_it} per revealed card, in revealed order.
-        Intent picked = (call == 1) ? choices[0] : choices[1];
-        ++call;
-        return picked;
+    int cards_drawn_events = 0;
+    int last_drawn_count = 0;
+    events.on_cards_drawn.connect([&](const CardsDrawnEvent& e) {
+        ++cards_drawn_events;
+        last_drawn_count = e.count;
+    });
+    std::vector<CardRevealedEvent> revealed_events;
+    events.on_card_revealed.connect([&](const CardRevealedEvent& e) {
+        revealed_events.push_back(e);
     });
 
-    auto source = state.createObject();
-    CardContext ctx{state, events, exec, P1, source};
-    Card* card = card_registry.get(kLightningRush);
-    ASSERT_NE(card, nullptr);
-    card->onResolve(ctx, {});
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    int picker_calls = 0;
+    driveResumable(kLightningRush, P1, src,
+        [&](const std::vector<Intent>& legal) {
+            ++picker_calls;
+            for (auto& i : legal)
+                if (i.chosen_value.has_value() && *i.chosen_value == 1) return i;
+            ADD_FAILURE() << "mode 1 (draw the 2nd revealed card, B) must "
+                             "be one of the offered choices";
+            return legal.front();
+        },
+        exec);
+
+    // Exactly ONE decision was needed to pick among all 3 + None — proves
+    // the fix (previously this would have been up to 3 separate draw/skip
+    // decisions, any one of which could independently say "draw").
+    EXPECT_EQ(picker_calls, 1)
+        << "choosing a card must be a SINGLE decision over all revealed "
+           "cards + None, never one draw/skip choice per card.";
 
     EXPECT_TRUE(inHand(P1, b));
     EXPECT_EQ(handSize(P1), 1);
@@ -515,6 +624,20 @@ TEST_F(KennenCardsTest, LightningRush_DrawsSecondOfThree_OtherTwoToTrashInOrder)
     EXPECT_EQ(state.player(P1).trash[0], c);
     EXPECT_EQ(state.player(P1).trash[1], a);
     EXPECT_EQ(deckSize(P1), 0);
+
+    // The chosen card is a DRAW: draws_this_turn bumped, one CardsDrawnEvent.
+    EXPECT_EQ(state.player(P1).draws_this_turn, 1);
+    EXPECT_EQ(cards_drawn_events, 1);
+    EXPECT_EQ(last_drawn_count, 1);
+
+    // "Look at" is PRIVATE (CR 128.4 / 424.1), not a public Reveal.
+    ASSERT_EQ(revealed_events.size(), 3u);
+    for (auto& e : revealed_events) {
+        EXPECT_FALSE(e.revealed_to_all)
+            << "Lightning Rush's look must not be a public reveal.";
+        EXPECT_EQ(e.revealed_to, P1);
+        EXPECT_EQ(e.source_zone, ZoneType::MainDeck);
+    }
 }
 
 // ─── Test #19 — agent picks none: all three go to trash ───────────────────
@@ -524,16 +647,17 @@ TEST_F(KennenCardsTest, LightningRush_AgentPicksNone_AllThreeToTrash) {
     auto b = addToDeck(P1, 1);
     auto c = addToDeck(P1, 1);
 
-    EffectExecutor exec(state, events, card_db, &card_registry);
-    exec.setAgentQuery([](PlayerId, const std::vector<Intent>& choices) {
-        return choices[1];  // always skip
-    });
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
 
-    auto source = state.createObject();
-    CardContext ctx{state, events, exec, P1, source};
-    Card* card = card_registry.get(kLightningRush);
-    ASSERT_NE(card, nullptr);
-    card->onResolve(ctx, {});
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    driveResumable(kLightningRush, P1, src,
+        [](const std::vector<Intent>& legal) {
+            // "None" is the LAST mode (index == actual == 3 here).
+            return legal.back();
+        },
+        exec);
 
     EXPECT_EQ(handSize(P1), 0);
     ASSERT_EQ(trashSize(P1), 3);
@@ -541,6 +665,7 @@ TEST_F(KennenCardsTest, LightningRush_AgentPicksNone_AllThreeToTrash) {
     EXPECT_TRUE(inTrash(P1, b));
     EXPECT_TRUE(inTrash(P1, c));
     EXPECT_EQ(deckSize(P1), 0);
+    EXPECT_EQ(state.player(P1).draws_this_turn, 0);
 }
 
 // ─── Test #20 — 2-card deck reveals two ────────────────────────────────────
@@ -549,21 +674,106 @@ TEST_F(KennenCardsTest, LightningRush_TwoCardDeck_RevealsTwo) {
     auto a = addToDeck(P1, 1);
     auto b = addToDeck(P1, 1);
 
-    EffectExecutor exec(state, events, card_db, &card_registry);
-    exec.setAgentQuery([](PlayerId, const std::vector<Intent>& choices) {
-        return choices[1];  // always skip
-    });
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
 
-    auto source = state.createObject();
-    CardContext ctx{state, events, exec, P1, source};
-    Card* card = card_registry.get(kLightningRush);
-    ASSERT_NE(card, nullptr);
-    card->onResolve(ctx, {});
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    driveResumable(kLightningRush, P1, src,
+        [](const std::vector<Intent>& legal) { return legal.back(); },  // None
+        exec);
 
     EXPECT_EQ(deckSize(P1), 0);
     ASSERT_EQ(trashSize(P1), 2);
     EXPECT_TRUE(inTrash(P1, a));
     EXPECT_TRUE(inTrash(P1, b));
+}
+
+// ─── Test — empty deck is a clean no-op (no crash, nothing offered) ───────
+
+TEST_F(KennenCardsTest, LightningRush_EmptyDeck_NoOp) {
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    EXPECT_NO_THROW(driveResumable(kLightningRush, P1, src,
+        [](const std::vector<Intent>& legal) {
+            return legal.empty() ? Intent{} : legal.front();
+        },
+        exec));
+
+    EXPECT_EQ(deckSize(P1), 0);
+    EXPECT_EQ(handSize(P1), 0);
+    EXPECT_EQ(trashSize(P1), 0);
+}
+
+// ─── Test (c) — printed Flow cost + offered as a flow intent from trash ───
+// Ties this card to the Task 4 mechanism (GameEngine::generateFlowPlayActions).
+
+TEST_F(KennenCardsTest, LightningRush_PrintedFlowCost_AndOfferedFromTrash) {
+    const auto& def = card_db.get(kLightningRush);
+    EXPECT_TRUE(def.keywords.has(Keyword::Flow));
+    EXPECT_EQ(def.flow_energy, 2);
+    EXPECT_EQ(def.flow_power, 1);
+    EXPECT_TRUE(def.flow_any_domain);
+
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    auto& s = engine.mutableState();
+    s.mode = ModeOfPlay{};
+    s.players[0].id = P1;
+    s.players[1].id = P2;
+    s.turn.turn_player = P1;
+    s.turn.turn_number = 1;
+    s.turn.phase = TurnPhase::MainPhase;
+    s.turn.ns_state = NeutralShowdownState::Neutral;
+    s.turn.oc_state = OpenClosedState::Open;
+    BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+    BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+
+    auto spell = s.createObject();
+    {
+        auto& o = s.getObject(spell);
+        o.owner = P1; o.controller = P1;
+        o.card_type = CardType::Spell;
+        o.card_def_id = kLightningRush;
+        o.name = def.name;
+        o.domains = def.domains;
+        o.keywords = def.keywords;
+        o.zone = ZoneType::Trash;
+    }
+    s.player(P1).trash.push_back(spell);
+
+    // Flow cost is 2E + 1 power ANY domain — 3 ready runes of any one
+    // domain affords it (exhaust 2 for energy, recycle 1 for power).
+    for (int i = 0; i < 3; ++i) {
+        auto rid = s.createObject();
+        auto& r = s.getObject(rid);
+        r.owner = P1; r.controller = P1;
+        r.card_type = CardType::Rune;
+        r.name = "Test Rune";
+        r.domains = {Domain::Fury};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{P1};
+        r.is_exhausted = false;
+    }
+
+    auto actions = engine.generateLegalActions();
+    bool offered_as_flow = false;
+    for (auto& a : actions) {
+        if (a.card != spell) continue;
+        if (a.type != IntentType::PlayCard && a.type != IntentType::PlayActionCard) continue;
+        if (a.play_source == Intent::PlaySource::Trash &&
+            a.flow_source == Intent::FlowSource::Printed) {
+            offered_as_flow = true;
+        }
+    }
+    EXPECT_TRUE(offered_as_flow)
+        << "Lightning Rush in the trash with an affordable flow cost must "
+           "be offered as a flow play (Task 4's generateFlowPlayActions).";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -601,6 +811,16 @@ TEST_F(KennenCardsTest, UpFromTheDeep_CreatesTwoExhaustedOneMightTentacles) {
 }
 
 // ─── Test #28 (addendum #7) — tokens don't empower Heart of the Tempest ───
+//
+// Fix round 1: the original test resolved Up from the Deep through a bare
+// EffectExecutor with no chain/TriggerManager wired up at all — so
+// `is_empowered` stayed false REGARDLESS of what the card did (vacuous:
+// nothing was listening for a CardPlayedEvent even if one had fired).
+// Rewritten to drive the spell's actual PLAY through the full engine (as
+// test #17 does for The Harrowing), with a real Heart of the Tempest
+// legend and TriggerManager subscribed, and a direct event-count
+// assertion: creating the two tokens must add NO CardPlayedEvent beyond
+// the spell's own single play.
 
 TEST_F(KennenCardsTest, UpFromTheDeep_TokensDoNotEmpowerHeartOfTheTempest) {
     GameEngine engine(card_db, events, card_registry);
@@ -611,6 +831,11 @@ TEST_F(KennenCardsTest, UpFromTheDeep_TokensDoNotEmpowerHeartOfTheTempest) {
     s.mode = ModeOfPlay{};
     s.players[0].id = P1;
     s.players[1].id = P2;
+    s.turn.turn_player = P1;
+    s.turn.turn_number = 1;
+    s.turn.phase = TurnPhase::MainPhase;
+    s.turn.ns_state = NeutralShowdownState::Neutral;
+    s.turn.oc_state = OpenClosedState::Open;
     BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
     BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
 
@@ -626,16 +851,131 @@ TEST_F(KennenCardsTest, UpFromTheDeep_TokensDoNotEmpowerHeartOfTheTempest) {
     s.player(P1).legend_zone = legend_id;
     ASSERT_FALSE(s.getObject(legend_id).is_empowered);
 
-    EffectExecutor exec(s, events, card_db, &card_registry);
-    auto source = s.createObject();
-    CardContext ctx{s, events, exec, P1, source};
-    Card* card = card_registry.get(kUpFromTheDeep);
-    ASSERT_NE(card, nullptr);
-    card->onResolve(ctx, {});
+    // 3 ready Chaos runes afford Up from the Deep (3E, no power).
+    for (int i = 0; i < 3; ++i) {
+        auto rid = s.createObject();
+        auto& r = s.getObject(rid);
+        r.owner = P1; r.controller = P1;
+        r.card_type = CardType::Rune;
+        r.name = "Test Rune";
+        r.domains = {Domain::Chaos};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{P1};
+        r.is_exhausted = false;
+    }
 
+    const auto& def = card_db.get(kUpFromTheDeep);
+    auto spell_id = s.createObject();
+    {
+        auto& o = s.getObject(spell_id);
+        o.owner = P1; o.controller = P1;
+        o.card_def_id = kUpFromTheDeep;
+        o.name = def.name;
+        o.card_type = def.card_type;
+        o.domains = def.domains;
+        o.zone = ZoneType::Hand;
+    }
+    s.player(P1).hand.push_back(spell_id);
+
+    int card_played_events = 0;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent&) { ++card_played_events; });
+
+    auto actions = engine.generateLegalActions();
+    Intent play;
+    bool found = false;
+    for (auto& a : actions) {
+        if (a.type == IntentType::PlayCard && a.card == spell_id) {
+            play = a;
+            found = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found)
+        << "Up from the Deep must be a legal hand play with 3 ready Chaos runes.";
+
+    engine.testHook_executeIntent(play);
+
+    // Up from the Deep's OWN play emits exactly one CardPlayedEvent (the
+    // spell itself, play_source=Hand). Creating the two Tentacle tokens
+    // must add NO further CardPlayedEvent — this is the assertion that
+    // actually distinguishes "tokens don't fire the trigger" from
+    // "nothing was wired up to observe it."
+    EXPECT_EQ(card_played_events, 1)
+        << "Only Up from the Deep's own play should emit a CardPlayedEvent; "
+           "token creation (CR 185, 350.2 — tokens are not cards) must "
+           "emit none.";
+
+    ASSERT_TRUE(s.objectExists(legend_id));
     EXPECT_FALSE(s.getObject(legend_id).is_empowered)
-        << "Token creation (CR 185, 350.2 — tokens are not cards) must "
-           "never fire WhenYouPlayFromNonHand.";
+        << "Token creation must never fire WhenYouPlayFromNonHand.";
+}
+
+// ─── Test (c) — printed Flow cost + offered as a flow intent from trash ───
+// Ties this card to the Task 4 mechanism (GameEngine::generateFlowPlayActions).
+
+TEST_F(KennenCardsTest, UpFromTheDeep_PrintedFlowCost_AndOfferedFromTrash) {
+    const auto& def = card_db.get(kUpFromTheDeep);
+    EXPECT_TRUE(def.keywords.has(Keyword::Flow));
+    EXPECT_EQ(def.flow_energy, 3);
+    EXPECT_EQ(def.flow_power, 0);
+    EXPECT_FALSE(def.flow_any_domain);
+
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    auto& s = engine.mutableState();
+    s.mode = ModeOfPlay{};
+    s.players[0].id = P1;
+    s.players[1].id = P2;
+    s.turn.turn_player = P1;
+    s.turn.turn_number = 1;
+    s.turn.phase = TurnPhase::MainPhase;
+    s.turn.ns_state = NeutralShowdownState::Neutral;
+    s.turn.oc_state = OpenClosedState::Open;
+    BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+    BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+
+    auto spell = s.createObject();
+    {
+        auto& o = s.getObject(spell);
+        o.owner = P1; o.controller = P1;
+        o.card_type = CardType::Spell;
+        o.card_def_id = kUpFromTheDeep;
+        o.name = def.name;
+        o.domains = def.domains;
+        o.keywords = def.keywords;
+        o.zone = ZoneType::Trash;
+    }
+    s.player(P1).trash.push_back(spell);
+
+    // Flow cost is 3E, no power — 3 ready runes of any domain affords it.
+    for (int i = 0; i < 3; ++i) {
+        auto rid = s.createObject();
+        auto& r = s.getObject(rid);
+        r.owner = P1; r.controller = P1;
+        r.card_type = CardType::Rune;
+        r.name = "Test Rune";
+        r.domains = {Domain::Chaos};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{P1};
+        r.is_exhausted = false;
+    }
+
+    auto actions = engine.generateLegalActions();
+    bool offered_as_flow = false;
+    for (auto& a : actions) {
+        if (a.card != spell) continue;
+        if (a.type != IntentType::PlayCard && a.type != IntentType::PlayActionCard) continue;
+        if (a.play_source == Intent::PlaySource::Trash &&
+            a.flow_source == Intent::FlowSource::Printed) {
+            offered_as_flow = true;
+        }
+    }
+    EXPECT_TRUE(offered_as_flow)
+        << "Up from the Deep in the trash with an affordable flow cost must "
+           "be offered as a flow play (Task 4's generateFlowPlayActions).";
 }
 
 }  // namespace
