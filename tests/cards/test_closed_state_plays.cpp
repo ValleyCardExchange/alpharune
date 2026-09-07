@@ -28,7 +28,7 @@
 ///   (d) a plain hand [Reaction] play still behaves exactly as before
 ///       (regression);
 ///   (e) a real facedown reveal through the chain emits
-///       `PlayedFromFacedownEvent` (Katarina 462's WhenYouPlayFromFacedown) —
+///       `PlayedFromFacedownEvent` (Katarina 585's WhenYouPlayFromFacedown) —
 ///       review finding #4: before the fix the only emit site was the dead
 ///       `GameEngine::executePlayFromHidden`, so the event never fired live.
 
@@ -588,7 +588,7 @@ TEST_F(ClosedStatePlaysTest, LiveHiddenRevealEmitsPlayedFromFacedownEvent) {
 
     ASSERT_EQ(facedown.size(), 1u)
         << "CR 811 — revealing and playing a facedown card is 'playing a card "
-           "from face down'. Katarina, Reckless (462) triggers on it, so the "
+           "from face down'. Katarina, Reckless (585) triggers on it, so the "
            "LIVE reveal path must emit PlayedFromFacedownEvent exactly once.";
     EXPECT_EQ(facedown[0].card, spell);
     EXPECT_EQ(facedown[0].player, P1);

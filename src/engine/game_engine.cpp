@@ -1562,7 +1562,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // face down; ChainManager routes the SPELL half here. Read the status
     // BEFORE anything below clears it: it decides the play source, suppresses
     // every cost path (CR 811 — the card is played IGNORING its base cost),
-    // and gates the PlayedFromFacedownEvent that Katarina, Reckless (462)
+    // and gates the PlayedFromFacedownEvent that Katarina, Reckless (585)
     // triggers on.
     const bool hidden_play = card.is_hidden;
 
@@ -1915,7 +1915,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
             ps.next_spell_bonus_damage = 0;
         }
     }
-    // "When you play a card from face down" (Katarina, Reckless 462). This is
+    // "When you play a card from face down" (Katarina, Reckless 585). This is
     // the LIVE reveal path — the event fires here, beside the CardPlayedEvent
     // for the same play, and precedes it so a subscriber that reads both sees
     // the facedown fact first (the ordering the removed, never-called
