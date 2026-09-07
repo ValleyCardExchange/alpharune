@@ -1411,6 +1411,75 @@ void GameEngine::executePlaySpell(const Intent& intent) {
                          ") targets=[" + tgt_str + "]");
     }
 
+    // ── Flow (CR 829): validate the claim BEFORE anything mutates ──
+    //
+    // `intent.flow_source` is a CLAIM, not a fact: executePlaySpell is
+    // reachable with hand-built intents (agents, the OpenSpiel bridge,
+    // replays), so the claim is re-checked against live state here — the last
+    // point at which nothing has changed yet. A flow play is legal only out
+    // of the trash, only for a cost that is live on the object right now, and
+    // only when that exact cost is payable right now. Anything else fails
+    // LOUDLY and executes nothing: silently degrading into a printed-cost
+    // play (the pre-fix behaviour) let a hand-tagged intent pay a flow cost
+    // out of hand and let a rejected play eat an unrelated replay grant.
+    const bool flow_play = intent.flow_source != Intent::FlowSource::None;
+    Card::FlowCost flow_cost{};
+    Domain flow_domain = Domain::Fury;
+    if (flow_play) {
+        // logWarn, not logTrace: Trace is suppressed unless a run asks for it
+        // (game_runner / main gate it behind --trace), and an illegal intent
+        // reaching execution must be visible in an ordinary run.
+        auto reject = [&](const std::string& reason) {
+            events_.logWarn("FLOW: illegal flow intent for " + card.name +
+                            " — " + reason);
+        };
+        if (intent.play_source != Intent::PlaySource::Trash) {
+            reject("play_source is not Trash");
+            return;
+        }
+        if (card.zone != ZoneType::Trash ||
+            std::find(ps.trash.begin(), ps.trash.end(), intent.card) ==
+                ps.trash.end()) {
+            reject("the card is not in its controller's trash");
+            return;
+        }
+        const bool wants_granted =
+            intent.flow_source == Intent::FlowSource::Granted;
+        bool found = false;
+        for (const auto& offer : liveFlowCosts(intent.card)) {
+            if (offer.source != intent.flow_source) continue;
+            flow_cost = offer.cost;
+            found = true;
+            break;
+        }
+        if (!found) {
+            reject(std::string("no live ") +
+                   (wants_granted ? "granted" : "printed") + " flow cost");
+            return;
+        }
+        bool payable = false;
+        if (flow_cost.any_domain) {
+            for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
+                if (canPayAdditionalCost(intent.player, flow_cost.energy,
+                                          flow_cost.power,
+                                          static_cast<Domain>(di))) {
+                    flow_domain = static_cast<Domain>(di);
+                    payable = true;
+                    break;
+                }
+            }
+        } else {
+            flow_domain = flow_cost.power_domain;
+            payable = canPayAdditionalCost(intent.player, flow_cost.energy,
+                                            flow_cost.power, flow_domain);
+        }
+        if (!payable) {
+            reject("cannot pay [E" + std::to_string(flow_cost.energy) +
+                   "][P" + std::to_string(flow_cost.power) + "]");
+            return;
+        }
+    }
+
     // Play source is derived from the card's zone BEFORE it's removed
     // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
     // Trash for a trash-replay (Fizz / Death from Below style plays).
@@ -1435,40 +1504,39 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     }
 
     // Flow (CR 829) — an ALTERNATE cost that REPLACES the base cost
-    // (CR 829.1.c.1), exactly like use_alt_play_cost: the trash-replay grant,
-    // payCardCost and the optional-cost riders are all skipped. The offer is
-    // RECOMPUTED here from the object rather than trusted off the intent, so
-    // a cost that expired or changed between offer and execution can't be
-    // paid at a stale price.
+    // (CR 829.1.c.1): the trash-replay grant, payCardCost and the
+    // optional-cost riders are all skipped. `flow_cost` / `flow_domain` were
+    // resolved and proven payable by the validation block above, so this only
+    // spends them.
     bool paid_via_flow = false;
-    int flow_energy_paid = 0;
-    if (intent.flow_source != Intent::FlowSource::None) {
-        for (const auto& offer : liveFlowCosts(intent.card)) {
-            if (offer.source != intent.flow_source) continue;
-            Domain d = offer.cost.power_domain;
-            if (offer.cost.any_domain) {
-                for (int di = 0; di < static_cast<int>(Domain::Count); ++di)
-                    if (canPayAdditionalCost(intent.player, offer.cost.energy,
-                                              offer.cost.power,
-                                              static_cast<Domain>(di))) {
-                        d = static_cast<Domain>(di);
-                        break;
-                    }
-            }
-            payAdditionalCost(intent.player, offer.cost.energy,
-                               offer.cost.power, d);
-            flow_energy_paid = offer.cost.energy;
-            paid_via_flow = true;
+    if (flow_play) {
+        paid_via_flow = payAdditionalCost(intent.player, flow_cost.energy,
+                                           flow_cost.power, flow_domain);
+        if (paid_via_flow) {
             events_.logTrace("FLOW: " + card.name +
-                " played from trash for [E" + std::to_string(offer.cost.energy) +
-                "][P" + std::to_string(offer.cost.power) + "] (" +
+                " played from trash for [E" + std::to_string(flow_cost.energy) +
+                "][P" + std::to_string(flow_cost.power) + "] (" +
                 (intent.flow_source == Intent::FlowSource::Granted
                     ? "granted" : "printed") + ")");
-            break;
+            // A GRANTED Flow is consumed by the play it paid for. A printed
+            // one consumes nothing, so a live grant survives a printed-cost
+            // play untouched.
+            if (intent.flow_source == Intent::FlowSource::Granted) {
+                card.granted_flow.reset();
+            }
+        } else {
+            // Unreachable: canPayAdditionalCost was checked for this exact
+            // (energy, power, domain) in the validation block, and nothing
+            // between there and here touches runes. Treated as an engine
+            // invariant violation the way the cost path's other
+            // "can't happen" is (assert in a debug build), plus a loud log so
+            // a release build leaves a trace instead of a silent miscount.
+            // paid_via_flow stays false, so the ordinary payment path below
+            // still charges the spell rather than granting it for free.
+            assert(false && "FLOW: payAdditionalCost failed after validation");
+            events_.logWarn("FLOW: payment failed after validation for " +
+                            card.name + " — engine invariant violated");
         }
-        // A granted Flow is consumed by the play — the object has left the
-        // trash, so a later return there must not resurrect the grant.
-        card.granted_flow.reset();
     }
 
     // Pay cost. A trash-replay grant overrides the printed cost (and its own
@@ -1577,7 +1645,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         // CardPlayedEvent / max_spell_spent_this_turn (Jhin) and the chain
         // item's total_energy_spent (Forgotten Library, Virtuoso) all read
         // the flow energy, not the printed cost that was never paid.
-        energy_spent = flow_energy_paid;
+        energy_spent = flow_cost.energy;
     } else if (card.card_def_id != kInvalidId) {
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
@@ -1604,19 +1672,19 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // onto the chain item — ChainManager re-resolves the spell `repeats_paid`
     // extra times in its post-resume loop.
     auto chain_id = chain_manager_->addSpell(intent.card, intent.player, intent.targets);
-    if (paid_via_flow) {
+    // One by-id lookup for everything this play stamps onto its own chain
+    // item. (addSpell appends, so this is the item the previous `back()`
+    // reached — addressing it by id just says so explicitly, and keeps the
+    // flow flag from needing a second scan.)
+    for (auto& item : state_.chain.items) {
+        if (item.id != chain_id) continue;
+        item.total_energy_spent = total_energy_spent;
+        item.repeats_paid = repeats;
         // CR 829.1.b.1 — a spell played for its Flow cost is BANISHED as it
-        // leaves the chain, not trashed. Flag the item here; the disposal
-        // sites (ChainManager::stepResolve, the counter/revert path) read it.
-        for (auto& it : state_.chain.items) {
-            if (it.id != chain_id) continue;
-            it.banish_on_leave = true;
-            break;
-        }
-    }
-    if (!state_.chain.items.empty()) {
-        state_.chain.items.back().total_energy_spent = total_energy_spent;
-        state_.chain.items.back().repeats_paid = repeats;
+        // leaves the chain, not trashed. Flag it here; the disposal sites
+        // (ChainManager::stepResolve, the counter/revert path) read it.
+        if (paid_via_flow) item.banish_on_leave = true;
+        break;
     }
 
     // Run the FEPR loop
@@ -2959,6 +3027,11 @@ std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId obj) c
     std::vector<FlowOffer> offers;
     if (obj == kInvalidId || !state_.objectExists(obj)) return offers;
     const auto& o = state_.getObject(obj);
+    // A Flow cost is a permission to play the card FROM THE TRASH (CR
+    // 829.1.b) and says nothing anywhere else, so an object outside the trash
+    // has no live flow cost at all — this is what stops a hand play tagged
+    // `flow_source = Printed` from being priced as a flow play.
+    if (o.zone != ZoneType::Trash) return offers;
 
     // Printed [Flow] — the object carries the keyword; the cost comes off the
     // Card (the default impl reads the def, and is valid only with the keyword).
@@ -2985,6 +3058,27 @@ std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId obj) c
     return offers;
 }
 
+namespace {
+
+/// Timing gate shared by the two trash-play generators
+/// (generateFlowPlayActions and generateTrashReplayActions), which were
+/// byte-identical here: neither a Flow cost nor a replay grant changes WHEN a
+/// spell may be played (CR 309/806/813; CR 829.1.b.2 for Flow), so the two
+/// must never drift apart. generateSpellActions keeps its own copy — its
+/// shape differs and it is out of scope for this change.
+bool trashPlayTimingAllows(const TurnState& turn, const GameObject& card,
+                            bool action_ok, bool reaction_ok) {
+    bool has_action = card.keywords.has(Keyword::Action);
+    const bool has_reaction = card.keywords.has(Keyword::Reaction);
+    if (has_reaction) has_action = true;
+    if (turn.isNeutralOpen()) return true;
+    if (turn.isShowdownOpen()) return has_action || has_reaction;
+    if (turn.isClosedState()) return has_reaction && reaction_ok;
+    return (action_ok && has_action) || (reaction_ok && has_reaction);
+}
+
+}  // namespace
+
 void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
                                           bool reaction_ok,
                                           std::vector<Intent>& actions) const {
@@ -3002,23 +3096,9 @@ void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
         auto offers = liveFlowCosts(card_id);
         if (offers.empty()) continue;
 
-        // Timing gate — identical to generateSpellActions (CR 309/806/813).
         // Flow changes what the play costs, never when it may happen.
-        bool has_action = card.keywords.has(Keyword::Action);
-        bool has_reaction = card.keywords.has(Keyword::Reaction);
-        if (has_reaction) has_action = true;
-        bool allowed = false;
-        if (state_.turn.isNeutralOpen()) {
-            allowed = true;
-        } else if (state_.turn.isShowdownOpen()) {
-            allowed = has_action || has_reaction;
-        } else if (state_.turn.isClosedState()) {
-            allowed = has_reaction && reaction_ok;
-        } else {
-            if (action_ok && has_action) allowed = true;
-            if (reaction_ok && has_reaction) allowed = true;
-        }
-        if (!allowed) continue;
+        if (!trashPlayTimingAllows(state_.turn, card, action_ok, reaction_ok))
+            continue;
 
         Card* spell_card = card_registry_.get(card.card_def_id);
         if (spell_card && !spell_card->hasLegalTargets(state_, player)) continue;
@@ -3103,22 +3183,9 @@ void GameEngine::generateTrashReplayActions(PlayerId player, bool action_ok,
         if (card.zone != ZoneType::Trash) continue;   // grant valid only in trash
         if (!card.isSpell()) continue;
 
-        // Timing gate — identical to generateSpellActions (CR 309/806/813).
-        bool has_action = card.keywords.has(Keyword::Action);
-        bool has_reaction = card.keywords.has(Keyword::Reaction);
-        if (has_reaction) has_action = true;
-        bool allowed = false;
-        if (state_.turn.isNeutralOpen()) {
-            allowed = true;
-        } else if (state_.turn.isShowdownOpen()) {
-            allowed = has_action || has_reaction;
-        } else if (state_.turn.isClosedState()) {
-            allowed = has_reaction && reaction_ok;
-        } else {
-            if (action_ok && has_action) allowed = true;
-            if (reaction_ok && has_reaction) allowed = true;
-        }
-        if (!allowed) continue;
+        // Timing gate — shared with generateFlowPlayActions (CR 309/806/813).
+        if (!trashPlayTimingAllows(state_.turn, card, action_ok, reaction_ok))
+            continue;
 
         // Affordability against the OVERRIDE cost, not the printed cost. For
         // an [A] grant, any single domain that's payable suffices.

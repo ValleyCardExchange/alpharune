@@ -22,6 +22,12 @@
 ///         printed Flow cost yields two distinct intents (one per cost).
 ///   #29 — (addendum #1) a live GRANTED flow plus a printed one yields two
 ///         flow intents, one per cost, and each pays its own cost.
+///
+/// Fix round 1 adds the execution branch's failure modes and the offer paths
+/// the first round left uncovered: a hand-tagged or stale `flow_source` is
+/// rejected loudly with nothing mutated and no grant consumed; a printed-cost
+/// play leaves a live grant alone; the showdown call site offers flow plays;
+/// and a spell lockout suppresses them.
 
 #include "tests/cards/card_test_fixture.h"
 
@@ -33,6 +39,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace riftbound;
@@ -137,8 +144,11 @@ protected:
         return id;
     }
 
-    /// Put a registered card object straight into `owner`'s trash.
-    GameObjectId addToTrash(GameState& s, PlayerId owner, CardDefId def_id) {
+    /// Put a registered card object straight into `owner`'s trash. Builds
+    /// into the ENGINE's state (the base fixture's addToHand/addToDeck build
+    /// into the fixture-owned `state`, which the engine never sees).
+    GameObjectId addToZoneIn(GameState& s, PlayerId owner, CardDefId def_id,
+                              ZoneType zone) {
         auto id = s.createObject();
         auto& obj = s.getObject(id);
         obj.owner = owner;
@@ -151,9 +161,18 @@ protected:
         obj.keywords = def.keywords;
         obj.domains = def.domains;
         obj.tags = def.tags;
-        obj.zone = ZoneType::Trash;
-        s.player(owner).trash.push_back(id);
+        obj.zone = zone;
+        if (zone == ZoneType::Trash) s.player(owner).trash.push_back(id);
+        else if (zone == ZoneType::Hand) s.player(owner).hand.push_back(id);
         return id;
+    }
+
+    GameObjectId addToTrash(GameState& s, PlayerId owner, CardDefId def_id) {
+        return addToZoneIn(s, owner, def_id, ZoneType::Trash);
+    }
+
+    GameObjectId addToHandIn(GameState& s, PlayerId owner, CardDefId def_id) {
+        return addToZoneIn(s, owner, def_id, ZoneType::Hand);
     }
 
     static std::vector<Intent> intentsFor(const std::vector<Intent>& actions,
@@ -472,4 +491,224 @@ TEST_F(FlowTest, GrantedAndPrintedFlowYieldTwoIntentsEachPayingItsOwnCost) {
     EXPECT_FALSE(s.getObject(spell).granted_flow.has_value())
         << "A granted Flow is consumed by the play — it must be cleared so a "
            "later return to the trash can't reuse it.";
+}
+
+// ─── Fix round 1 — the execution branch validates its intent ───────────────
+//
+// A flow_source tag on an Intent is a CLAIM, and executePlaySpell is
+// reachable with hand-built intents (agents, the OpenSpiel bridge, replays).
+// The claim is re-checked against live state before anything mutates, and an
+// intent that fails the check is rejected LOUDLY rather than quietly
+// degrading into a printed-cost play.
+
+TEST_F(FlowTest, HandTaggedFlowIntentIsRejectedAndMutatesNothing) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    // The SAME card, but in hand — a flow cost is only ever payable out of
+    // the trash (CR 829.1.b).
+    auto hand_spell = addToHandIn(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+    int warnings = 0;
+    auto log = events.on_log.connect([&](const LogEvent& e) {
+        if (e.level == LogLevel::Warning &&
+            e.message.find("FLOW: illegal flow intent") != std::string::npos)
+            ++warnings;
+    });
+
+    // Hand-forged: claims the printed flow cost for a card that is in HAND.
+    Intent forged;
+    forged.type = IntentType::PlayCard;
+    forged.player = P1;
+    forged.card = hand_spell;
+    forged.play_source = Intent::PlaySource::Hand;
+    forged.flow_source = Intent::FlowSource::Printed;
+    engine.testHook_executeIntent(forged);
+
+    EXPECT_TRUE(played.empty())
+        << "A flow claim on a hand play must be rejected outright — no card "
+           "may be played at all.";
+    EXPECT_EQ(countExhausted(s, P1), 0)
+        << "Rejection must happen BEFORE any mutation: not one rune may be "
+           "exhausted.";
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "…and not one rune recycled.";
+    EXPECT_EQ(s.player(P1).hand.size(), 1u)
+        << "The card must still be in hand.";
+    EXPECT_TRUE(s.chain.items.empty())
+        << "Nothing may reach the chain.";
+    EXPECT_EQ(s.player(P1).cards_played_this_turn, 0);
+
+    // Same forgery, relabelled play_source = Trash: the card still is not in
+    // the trash, and liveFlowCosts only speaks for objects that are.
+    Intent forged_trash = forged;
+    forged_trash.play_source = Intent::PlaySource::Trash;
+    engine.testHook_executeIntent(forged_trash);
+
+    EXPECT_TRUE(played.empty())
+        << "Relabelling play_source must not launder the claim — the object's "
+           "actual zone decides.";
+    EXPECT_EQ(countExhausted(s, P1), 0);
+    EXPECT_EQ(s.player(P1).hand.size(), 1u);
+    EXPECT_TRUE(s.chain.items.empty());
+
+    EXPECT_EQ(warnings, 2)
+        << "Both rejections must fail LOUDLY: a WARNING-level "
+           "\"FLOW: illegal flow intent\" line each. Trace level would be "
+           "invisible in an ordinary run.";
+}
+
+TEST_F(FlowTest, StaleFlowSourceIsRejectedAndLeavesGrantsIntact) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    // A grant that expired LAST turn — dead by the evaluated-expiry rule, so
+    // there is no live Granted offer for the intent below to name.
+    GameObject::GrantedFlow gf;
+    gf.energy = 1;
+    gf.valid_on_turn = s.turn.turn_number - 1;
+    s.getObject(spell).granted_flow = gf;
+
+    // An unrelated Death-from-Below grant sitting on the same player: the
+    // rejected flow play must not consume it as a consolation payment.
+    PlayerState::TrashReplayGrant replay_grant;
+    replay_grant.card = spell;
+    replay_grant.energy = 1;
+    replay_grant.any_domain = true;
+    s.player(P1).trash_replay_grants.push_back(replay_grant);
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+    std::vector<std::string> warnings;
+    auto log = events.on_log.connect([&](const LogEvent& e) {
+        if (e.level == LogLevel::Warning) warnings.push_back(e.message);
+    });
+
+    Intent stale;
+    stale.type = IntentType::PlayCard;
+    stale.player = P1;
+    stale.card = spell;
+    stale.play_source = Intent::PlaySource::Trash;
+    stale.flow_source = Intent::FlowSource::Granted;
+    engine.testHook_executeIntent(stale);
+
+    EXPECT_TRUE(played.empty())
+        << "A flow_source naming a cost that is no longer live must be "
+           "rejected, not silently downgraded to the printed cost.";
+    EXPECT_EQ(countExhausted(s, P1), 0)
+        << "Rejection happens before any payment.";
+    EXPECT_EQ(s.player(P1).trash.size(), 1u)
+        << "The card must still be in the trash.";
+    EXPECT_TRUE(s.chain.items.empty());
+    EXPECT_TRUE(s.getObject(spell).granted_flow.has_value())
+        << "A rejected play consumes nothing — the (dead) grant record must "
+           "survive, since clearing it is the payment's job, not the "
+           "rejection's.";
+    EXPECT_EQ(s.player(P1).trash_replay_grants.size(), 1u)
+        << "The unrelated Death-from-Below grant must not be eaten by a "
+           "rejected flow play.";
+
+    ASSERT_EQ(warnings.size(), 1u)
+        << "The rejection must fail LOUDLY — exactly one WARNING line.";
+    EXPECT_NE(warnings[0].find("FLOW: illegal flow intent"), std::string::npos)
+        << "actual: " << warnings[0];
+    EXPECT_NE(warnings[0].find("no live granted flow cost"), std::string::npos)
+        << "The warning must name WHY the intent was rejected. actual: "
+        << warnings[0];
+}
+
+TEST_F(FlowTest, PrintedFlowPlayLeavesALiveGrantInPlace) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    GameObject::GrantedFlow gf;
+    gf.energy = 1;
+    gf.valid_on_turn = s.turn.turn_number;
+    s.getObject(spell).granted_flow = gf;
+
+    Intent printed_play{};
+    for (const auto& o : intentsFor(engine.generateLegalActions(), spell))
+        if (o.flow_source == Intent::FlowSource::Printed) printed_play = o;
+    ASSERT_EQ(printed_play.flow_source, Intent::FlowSource::Printed);
+
+    engine.testHook_executeIntent(printed_play);
+
+    EXPECT_EQ(countExhausted(s, P1), 2)
+        << "The PRINTED flow cost [E2] was chosen — the cheaper live grant "
+           "must not be substituted for it.";
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 1u)
+        << "…including its [P1], paid by recycling one rune.";
+    EXPECT_TRUE(s.getObject(spell).granted_flow.has_value())
+        << "Paying the PRINTED cost consumes nothing granted — only a play "
+           "that actually spends the grant may clear it.";
+}
+
+// ─── Fix round 1 — coverage of the remaining offer paths ───────────────────
+
+TEST_F(FlowTest, ShowdownCallSiteOffersFlowPlays) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+    s.turn.ns_state    = NeutralShowdownState::Showdown;
+    s.turn.oc_state    = OpenClosedState::Open;
+    s.turn.focus_holder = P1;
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 1u)
+        << "generateFlowPlayActions must be wired into the SHOWDOWN action "
+           "generator too, not just the main phase and closed state.";
+    EXPECT_EQ(offers[0].type, IntentType::PlayActionCard)
+        << "Showdown plays use PlayActionCard, as the hand path does.";
+    EXPECT_EQ(offers[0].flow_source, Intent::FlowSource::Printed);
+    EXPECT_EQ(offers[0].play_source, Intent::PlaySource::Trash);
+}
+
+TEST_F(FlowTest, CantPlaySpellsThisTurnSuppressesFlowOffers) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    ASSERT_EQ(intentsFor(engine.generateLegalActions(), spell).size(), 1u)
+        << "sanity: the flow play is offered while nothing suppresses it";
+
+    s.player(P1).cant_play_spells_this_turn = true;
+    EXPECT_TRUE(intentsFor(engine.generateLegalActions(), spell).empty())
+        << "A spell lockout suppresses flow plays exactly as it suppresses "
+           "hand plays and trash-replay plays — Flow changes the cost, not "
+           "the permission to play a spell at all.";
 }
