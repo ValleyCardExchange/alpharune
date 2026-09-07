@@ -460,9 +460,22 @@ it is linked from.
     Tests **#30** (empowered unit killed → not empowered) and **#31**
     (empowered unit bounced → not empowered).
 
+11. **(added during Task 8 review, 2026-09-07)** `revealAndChoose` asks
+    draw/skip PER card with no cap, so routing Lightning Rush through it
+    (addendum #4) would let an agent draw all three — a rules break under
+    the fully-faithful ruling. Lightning Rush therefore implements its own
+    resumable look-and-choose in the card (Stacked Deck's pattern plus a
+    decline mode: exactly one card or none), does the draw bookkeeping
+    itself (`draws_this_turn`, `CardsDrawnEvent`), and sends the rest to
+    trash in looked-at order. "Look at" is PRIVATE (CR 128.4): the card
+    emits `CardRevealedEvent{revealed_to_all=false, revealed_to=controller}`
+    per card, never a public reveal. Addendum #4's helper parameter stays
+    (implemented and tested in Task 7) but has no in-scope caller.
+
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board
-exit).
+exit); #28 rewritten per addendum #11's review to assert no
+`CardPlayedEvent` through a real engine resolve.
 
 ## Section 9 — Where it lives
 
