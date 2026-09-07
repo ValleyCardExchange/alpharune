@@ -37,9 +37,18 @@ public:
                 auto& top = ctx.state.chain.items.back();
                 if (top.is_spell) {
                     auto countered_source = top.source;
+                    bool banish_on_leave = top.banish_on_leave;  // capture BEFORE the pop
                     revertCounteredPlay(ctx, top);  // CR 425.1.b
                     ctx.state.chain.items.pop_back();
-                    if (ctx.state.objectExists(countered_source)) {
+                    if (banish_on_leave) {
+                        // CR 829.1.b.1 overrides Abandon's own hand-return
+                        // here: the countered spell would leave the chain,
+                        // and leaving wasn't instructed by its OWN
+                        // execution (Abandon's text is instructing it, not
+                        // the countered spell's) — so it is banished
+                        // instead, same as any other counter disposal.
+                        disposeCounteredSpell(ctx, countered_source, /*banish_on_leave=*/true);
+                    } else if (ctx.state.objectExists(countered_source)) {
                         auto& obj = ctx.state.getObject(countered_source);
                         ctx.events.logTrace("COUNTER: " + obj.name +
                                             " countered by Abandon -> hand");

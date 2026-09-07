@@ -53,8 +53,10 @@ constexpr CardDefId kFlowReactionSpell = 902;
 
 // Real, already-registered counter spells used to drive Task 5's disposal
 // tests through the actual chain.
-constexpr CardDefId kHardBargainId = 457;  // self-disposing (card edit)
-constexpr CardDefId kRepulseId     = 668;  // routes through counterChainTop
+constexpr CardDefId kHardBargainId        = 457;  // self-disposing (card edit)
+constexpr CardDefId kRepulseId            = 668;  // routes through counterChainTop
+constexpr CardDefId kFlurryOfFeathersId   = 606;  // self-disposing, modal (card edit)
+constexpr CardDefId kAbandonId            = 693;  // self-disposing, banish overrides hand-return
 
 /// Base shape for both test spells: printed 1E (cheap, so "only the printed
 /// cost is affordable" is a reachable state), Flow 2E + 1 power in ANY
@@ -606,6 +608,103 @@ TEST_F(FlowTest, RepulseCountersAFlowSpellToBanishmentViaCounterChainTop) {
     EXPECT_NE(std::find(ps.banishment.begin(), ps.banishment.end(), target),
               ps.banishment.end());
     EXPECT_EQ(std::find(ps.trash.begin(), ps.trash.end(), target), ps.trash.end());
+}
+
+// ─── Fix round 1: two more self-disposing counter cards ───────────────────
+
+// Flurry of Feathers (606) is modal ("Counter a spell" / "Play four Bird
+// tokens") and disposes of its counter target inline, like Defy and Hard
+// Bargain. Precedent for driving its modal resolve:
+// tests/cards/test_audit_fixes_2.cpp's
+// AuditFix2Test.FlurryOfFeathers_CounterModeRemovesTopSpell.
+TEST_F(FlowTest, FlurryOfFeathersCountersAFlowSpellToBanishment) {
+    auto victim = pushSpellOnChain(P2, kFlowActionSpell);
+    state.chain.items.back().banish_on_leave = true;
+    auto flurry = pushSpellOnChain(P1, kFlurryOfFeathersId);
+    // ChainManager would pop Flurry before onResolve; emulate by removing
+    // it from `items` so chain.items.back() is the victim.
+    state.chain.items.pop_back();
+    ASSERT_EQ(state.chain.items.size(), 1u);
+
+    EffectExecutor exec(state, events, card_db);
+    // Picker: select the "Counter a spell" mode (mode 0).
+    auto pick_counter_mode = [](const std::vector<Intent>& legal) -> Intent {
+        for (auto& i : legal)
+            if (i.chosen_value.has_value() && *i.chosen_value == 0) return i;
+        return legal.empty() ? Intent{} : legal.front();
+    };
+    driveResumable(kFlurryOfFeathersId, P1, flurry, pick_counter_mode, exec);
+
+    EXPECT_TRUE(state.chain.items.empty());
+    EXPECT_EQ(state.getObject(victim).zone, ZoneType::Banishment)
+        << "CR 829.1.b.1 — the Flow-played victim is banished, not trashed, "
+           "when Flurry of Feathers counters it.";
+    auto& ps = state.player(P2);
+    EXPECT_NE(std::find(ps.banishment.begin(), ps.banishment.end(), victim),
+              ps.banishment.end());
+    EXPECT_EQ(std::find(ps.trash.begin(), ps.trash.end(), victim), ps.trash.end());
+}
+
+// Abandon (693) redirects a countered spell to its OWNER's hand rather than
+// trash — CR 829.1.b.1 overrides that redirect for a Flow-played spell:
+// the spell would leave the chain, and leaving wasn't instructed by its OWN
+// execution (Abandon's text is instructing it, not the countered spell's),
+// so it is banished instead. A second test guards that a non-flow spell
+// still gets Abandon's ordinary hand-return (precedent:
+// tests/cards/test_counter_spells.cpp's AbandonTest.ReturnsCounteredSpellToHand).
+TEST_F(FlowTest, AbandonBanishesAFlowSpellInsteadOfReturningItToHand) {
+    auto target = pushSpellOnChain(P2, kFlowActionSpell);
+    state.chain.items.back().banish_on_leave = true;
+    addToDeck(P1, kInvalidId);  // for Abandon's Predict 1 side effect
+
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
+
+    EffectExecutor exec(state, events, card_db);
+    // Predict picker: pick "keep" (chosen_objects empty) — irrelevant here.
+    driveResumable(kAbandonId, P1, src,
+        [](const std::vector<Intent>& legal) {
+            for (auto& i : legal)
+                if (i.chosen_objects.empty()) return i;
+            return legal.empty() ? Intent{} : legal.front();
+        }, exec);
+
+    EXPECT_TRUE(state.chain.items.empty());
+    EXPECT_EQ(state.getObject(target).zone, ZoneType::Banishment)
+        << "CR 829.1.b.1 overrides Abandon's own hand-return for a "
+           "Flow-played spell.";
+    auto& ps = state.player(P2);
+    EXPECT_NE(std::find(ps.banishment.begin(), ps.banishment.end(), target),
+              ps.banishment.end());
+    EXPECT_EQ(std::find(ps.hand.begin(), ps.hand.end(), target), ps.hand.end())
+        << "must NOT also land in hand.";
+}
+
+TEST_F(FlowTest, AbandonStillReturnsANonFlowSpellToHand) {
+    // Guard: the pre-Task-5 behaviour for a non-flow spell is unchanged.
+    auto target = pushSpellOnChain(P2, kFlowActionSpell);
+    // banish_on_leave left false — this spell was NOT flow-played.
+    addToDeck(P1, kInvalidId);
+
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
+
+    EffectExecutor exec(state, events, card_db);
+    driveResumable(kAbandonId, P1, src,
+        [](const std::vector<Intent>& legal) {
+            for (auto& i : legal)
+                if (i.chosen_objects.empty()) return i;
+            return legal.empty() ? Intent{} : legal.front();
+        }, exec);
+
+    EXPECT_TRUE(state.chain.items.empty());
+    EXPECT_EQ(state.getObject(target).zone, ZoneType::Hand)
+        << "guard: Abandon's ordinary hand-return for a non-flow counter "
+           "must be unchanged by the banish override.";
+    auto& ps = state.player(P2);
+    EXPECT_NE(std::find(ps.hand.begin(), ps.hand.end(), target), ps.hand.end());
 }
 
 // ─── Task 5, Test #11: granted flow expires when the turn advances ────────
