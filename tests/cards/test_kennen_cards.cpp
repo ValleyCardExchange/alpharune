@@ -479,5 +479,92 @@ TEST_F(KennenCardsTest, HeartOfTheTempest_EmpowersOnTrashPlay_ActionGivesAssault
         << "Assault 2 must expire at the turn's Expiration Step.";
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Task 8 — 790 Lightning Rush
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Test #18 — draws the second of three revealed; other two to trash ────
+
+TEST_F(KennenCardsTest, LightningRush_DrawsSecondOfThree_OtherTwoToTrashInOrder) {
+    // Deck reads [bottom=A, middle=B, top=C]. Revealed order (top to
+    // bottom) is [C, B, A]. "Draws the second" means: skip C, draw B, skip A.
+    auto a = addToDeck(P1, 1);
+    auto b = addToDeck(P1, 1);
+    auto c = addToDeck(P1, 1);
+    ASSERT_EQ(state.player(P1).main_deck.back(), c);
+    ASSERT_EQ(handSize(P1), 0);
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    int call = 0;
+    exec.setAgentQuery([&](PlayerId, const std::vector<Intent>& choices) {
+        // choices = {draw_it, skip_it} per revealed card, in revealed order.
+        Intent picked = (call == 1) ? choices[0] : choices[1];
+        ++call;
+        return picked;
+    });
+
+    auto source = state.createObject();
+    CardContext ctx{state, events, exec, P1, source};
+    Card* card = card_registry.get(kLightningRush);
+    ASSERT_NE(card, nullptr);
+    card->onResolve(ctx, {});
+
+    EXPECT_TRUE(inHand(P1, b));
+    EXPECT_EQ(handSize(P1), 1);
+    ASSERT_EQ(trashSize(P1), 2);
+    EXPECT_EQ(state.player(P1).trash[0], c);
+    EXPECT_EQ(state.player(P1).trash[1], a);
+    EXPECT_EQ(deckSize(P1), 0);
+}
+
+// ─── Test #19 — agent picks none: all three go to trash ───────────────────
+
+TEST_F(KennenCardsTest, LightningRush_AgentPicksNone_AllThreeToTrash) {
+    auto a = addToDeck(P1, 1);
+    auto b = addToDeck(P1, 1);
+    auto c = addToDeck(P1, 1);
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    exec.setAgentQuery([](PlayerId, const std::vector<Intent>& choices) {
+        return choices[1];  // always skip
+    });
+
+    auto source = state.createObject();
+    CardContext ctx{state, events, exec, P1, source};
+    Card* card = card_registry.get(kLightningRush);
+    ASSERT_NE(card, nullptr);
+    card->onResolve(ctx, {});
+
+    EXPECT_EQ(handSize(P1), 0);
+    ASSERT_EQ(trashSize(P1), 3);
+    EXPECT_TRUE(inTrash(P1, a));
+    EXPECT_TRUE(inTrash(P1, b));
+    EXPECT_TRUE(inTrash(P1, c));
+    EXPECT_EQ(deckSize(P1), 0);
+}
+
+// ─── Test #20 — 2-card deck reveals two ────────────────────────────────────
+
+TEST_F(KennenCardsTest, LightningRush_TwoCardDeck_RevealsTwo) {
+    auto a = addToDeck(P1, 1);
+    auto b = addToDeck(P1, 1);
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    exec.setAgentQuery([](PlayerId, const std::vector<Intent>& choices) {
+        return choices[1];  // always skip
+    });
+
+    auto source = state.createObject();
+    CardContext ctx{state, events, exec, P1, source};
+    Card* card = card_registry.get(kLightningRush);
+    ASSERT_NE(card, nullptr);
+    card->onResolve(ctx, {});
+
+    EXPECT_EQ(deckSize(P1), 0);
+    ASSERT_EQ(trashSize(P1), 2);
+    EXPECT_TRUE(inTrash(P1, a));
+    EXPECT_TRUE(inTrash(P1, b));
+}
+
 }  // namespace
 }  // namespace riftbound::test
