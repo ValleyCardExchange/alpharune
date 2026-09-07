@@ -53,6 +53,12 @@ void GameEngine::initSubsystems() {
         [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
     chain_manager_->setPayCost(
         [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
+    // Closed-State [Reaction] plays of SPELLS run through the ONE spell-play
+    // executor (see ChainManager::setPlaySpell). Without this the chain's own
+    // thin copy pays the printed cost for a [Flow] play, leaves the card in
+    // the trash, and drops the Sandswept Tomb restriction on the floor.
+    chain_manager_->setPlaySpell(
+        [this](const Intent& i) { executePlaySpell(i); });
     effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
     effect_executor_->setRng(&rng_);
     effect_executor_->setAgentQuery(
@@ -1505,6 +1511,17 @@ void GameEngine::executePlaySpell(const Intent& intent) {
                          ") targets=[" + tgt_str + "]");
     }
 
+    // ── Facedown reveal (CR 811) ──
+    //
+    // A card hidden at a battlefield gains [Reaction] the turn after it was
+    // hidden and is offered as a closed-state PlayReaction while still
+    // face down; ChainManager routes the SPELL half here. Read the status
+    // BEFORE anything below clears it: it decides the play source, suppresses
+    // every cost path (CR 811 — the card is played IGNORING its base cost),
+    // and gates the PlayedFromFacedownEvent that Katarina, Reckless (462)
+    // triggers on.
+    const bool hidden_play = card.is_hidden;
+
     // ── Sandswept Tomb (792): what this play's POWER discount is ──
     //
     // Two shapes, decided BEFORE anything is paid (both cost paths below read
@@ -1635,7 +1652,9 @@ void GameEngine::executePlaySpell(const Intent& intent) {
 
     // Play source is derived from the card's zone BEFORE it's removed
     // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
-    // Trash for a trash-replay (Fizz / Death from Below style plays).
+    // Trash for a trash-replay (Fizz / Death from Below style plays),
+    // Hidden for a facedown reveal (keyed off `card.is_hidden`, which the
+    // removal block below clears).
     // Named event_play_source (not play_source) so it doesn't
     // shadow-by-name intent.play_source below (drives
     // current_play_source / the trash-replay-grant cost path and can
@@ -1646,7 +1665,20 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     Intent::PlaySource event_play_source = playSourceFor(card);
 
     // Remove from the source zone.
-    if (card.zone == ZoneType::Hand) {
+    if (hidden_play) {
+        // Facedown reveal (CR 811): the card leaves the battlefield's
+        // facedown zone and stops being hidden. addSpell below moves it on to
+        // the chain zone, so nothing else has to touch `card.zone` here.
+        for (auto& bf : state_.battlefields) {
+            auto fit = std::find(bf.facedown.begin(), bf.facedown.end(),
+                                  intent.card);
+            if (fit == bf.facedown.end()) continue;
+            bf.facedown.erase(fit);
+            break;
+        }
+        card.is_hidden = false;
+        card.hidden_at = kInvalidId;
+    } else if (card.zone == ZoneType::Hand) {
         auto it = std::find(ps.hand.begin(), ps.hand.end(), intent.card);
         if (it != ps.hand.end()) ps.hand.erase(it);
     } else if (intent.play_source == Intent::PlaySource::Trash &&
@@ -1692,10 +1724,14 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         }
     }
 
-    // Pay cost. A trash-replay grant overrides the printed cost (and its own
-    // additional costs); otherwise the normal play_source-aware path runs.
+    // Pay cost. A facedown reveal pays nothing at all (CR 811 — played
+    // IGNORING its base cost, which takes the trash-replay grant and the
+    // printed-cost path with it). A trash-replay grant overrides the printed
+    // cost (and its own additional costs); otherwise the normal
+    // play_source-aware path runs.
     bool paid_via_grant = false;
-    if (!paid_via_flow && intent.play_source == Intent::PlaySource::Trash) {
+    if (!hidden_play && !paid_via_flow &&
+        intent.play_source == Intent::PlaySource::Trash) {
         // Sandswept Tomb's discount is deliberately NOT applied to a
         // trash-replay grant: the grant is a flat override cost of its own
         // (Death from Below's "play a spell from your trash for [1]"), and
@@ -1703,7 +1739,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         // payment stay in step. Neither deck in scope contains such a grant.
         paid_via_grant = payTrashReplayGrant(intent.player, intent.card);
     }
-    if (!paid_via_flow && !paid_via_grant) {
+    if (!hidden_play && !paid_via_flow && !paid_via_grant) {
         ps.current_play_source = intent.play_source;
         // Irelia, Graceful (462): "your spells that choose me cost [1]/[A] less."
         // Stage the largest per-target reduction among this spell's chosen
@@ -1804,7 +1840,13 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // Track play count
     ps.cards_played_this_turn++;
     int energy_spent = 0;
-    if (paid_via_flow) {
+    if (hidden_play) {
+        // CR 811 — the reveal ignored the base cost, so nothing was spent on
+        // it. Reporting the printed cost here would feed a play that cost
+        // zero into max_spell_spent_this_turn (Jhin) and the chain item's
+        // total_energy_spent (Forgotten Library, Virtuoso).
+        energy_spent = 0;
+    } else if (paid_via_flow) {
         // Flow REPLACED the base cost — report what was actually spent, so
         // CardPlayedEvent / max_spell_spent_this_turn (Jhin) and the chain
         // item's total_energy_spent (Forgotten Library, Virtuoso) all read
@@ -1861,6 +1903,14 @@ void GameEngine::executePlaySpell(const Intent& intent) {
 }
 
 void GameEngine::runChain() {
+    // Re-entrancy guard. executePlaySpell ends here, and a Closed-State
+    // [Reaction] spell play is routed into executePlaySpell from INSIDE
+    // ChainManager::processFEPR. The item that play just added belongs to the
+    // loop already running — stepExecuteAndPass restarts it at Finalize the
+    // moment it sees the chain grew. Starting a second loop here would
+    // instead resolve the whole chain out from under the outer one.
+    if (chain_manager_->isProcessing()) return;
+
     chain_manager_->processFEPR(
         // Agent query callback
         [this](PlayerId player, const std::vector<Intent>& actions) -> Intent {

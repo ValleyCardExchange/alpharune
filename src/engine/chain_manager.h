@@ -76,6 +76,31 @@ public:
     using PayCost = std::function<bool(PlayerId, GameObjectId)>;
     void setPayCost(PayCost pay) { pay_cost_ = std::move(pay); }
 
+    /// Set the spell-play executor (injected from GameEngine —
+    /// GameEngine::executePlaySpell).
+    ///
+    /// Closed-State [Reaction] plays reach the chain as PlayReaction intents
+    /// and `GameEngine::executeIntent` has no case for them, so
+    /// stepExecuteAndPass is the only executor they ever meet. Routing the
+    /// SPELL half of that branch back through executePlaySpell keeps ONE
+    /// owner for every spell play — hand, trash-replay, [Flow], the
+    /// Sandswept Tomb restricted variant and the facedown reveal — instead of
+    /// a second, thinner copy here that knew about none of them. Non-spell
+    /// reactions (Quick-Draw gear, Ambush / Rengar units, facedown
+    /// permanents) keep the local path below.
+    using PlaySpell = std::function<void(const Intent&)>;
+    void setPlaySpell(PlaySpell play) { play_spell_ = std::move(play); }
+
+    /// True while processFEPR is running.
+    ///
+    /// GameEngine::executePlaySpell ends by calling GameEngine::runChain, and
+    /// the routed closed-state play calls it from INSIDE this loop. The
+    /// engine consults this so the nested call adds its chain item and
+    /// returns instead of starting a second FEPR loop that would resolve the
+    /// chain out from under the outer one (stepExecuteAndPass already
+    /// restarts at Finalize once an item is added).
+    bool isProcessing() const { return processing_; }
+
     /// Inject the EffectExecutor so stepResolve can detect mid-resolution
     /// pending choices published by Card::onResolve / onTrigger via
     /// `requestChoice`. Required before processFEPR runs.
@@ -90,7 +115,9 @@ private:
     const CardDB& card_db_;
     AffordCheck can_afford_;
     PayCost pay_cost_;
+    PlaySpell play_spell_;
     EffectExecutor* executor_ = nullptr;
+    bool processing_ = false;
 
     /// Step 1: Finalize all pending items in order.
     /// Returns true if any items were finalized.

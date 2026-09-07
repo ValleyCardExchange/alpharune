@@ -106,6 +106,16 @@ void ChainManager::processFEPR(
     std::function<void(const ChainItem&)> resolve_spell,
     ClosedActionsGen gen_closed_actions) {
 
+    // Mark the loop live for the duration (see ChainManager::isProcessing —
+    // a routed closed-state spell play re-enters GameEngine::runChain from
+    // inside stepExecuteAndPass). RAII so the two early returns below can't
+    // leave the flag stuck set.
+    struct ProcessingGuard {
+        bool& flag;
+        explicit ProcessingGuard(bool& f) : flag(f) { flag = true; }
+        ~ProcessingGuard() { flag = false; }
+    } processing_guard(processing_);
+
     constexpr int kMaxIterations = 100; // safety
     int iterations = 0;
 
@@ -230,13 +240,45 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             auto& card = state_.getObject(chosen.card);
             auto& ps = state_.player(current);
 
-            // Play source is derived from the card's zone/hidden-status
-            // (Kennen spec §2/addendum #2) BEFORE is_hidden is cleared
-            // below — this is the LIVE CR 811 facedown-reveal-as-reaction
-            // path (a card played this way is offered as a PlayReaction
-            // intent while still hidden, unlike the dead
-            // GameEngine::executePlayFromHidden sites, which nothing in
-            // src/ or tests/ calls). ChainManager can't call
+            // ── SPELLS: one executor owns every spell play ──
+            //
+            // GameEngine::executeIntent has no PlayReaction case, so a
+            // closed-state spell offer used to be executed by the local path
+            // below — a second, thinner copy of executePlaySpell that paid
+            // via payCardCost only (no [Flow], no Sandswept Tomb staging),
+            // looked for the card in `ps.hand` alone (a trash-replay or
+            // [Flow] play was therefore never removed from the trash, and the
+            // disposal below pushed a DUPLICATE trash entry), never set
+            // `banish_on_leave`, never consumed a granted Flow and never
+            // stamped `target_battlefield_restriction`. Routing through
+            // GameEngine::executePlaySpell fixes all of those at once,
+            // including the facedown reveal (which executePlaySpell now
+            // handles: facedown-zone removal, the is_hidden clear,
+            // PlayedFromFacedownEvent and play_source = Hidden).
+            //
+            // executePlaySpell adds the chain item itself and re-enters
+            // runChain, which returns immediately while this loop is live
+            // (ChainManager::isProcessing). If it added nothing the intent
+            // was rejected as illegal — it pays nothing on that path, so
+            // priority simply stays where it is rather than restarting FEPR
+            // on an unchanged chain.
+            if (play_spell_ && card.isSpell()) {
+                const size_t before = state_.chain.items.size();
+                play_spell_(chosen);
+                if (state_.chain.items.size() != before) {
+                    return true; // Item added → restart FEPR from Finalize
+                }
+                events_.logWarn("CHAIN: reaction play of " + card.name +
+                                " executed nothing — intent rejected");
+                continue;
+            }
+
+            // ── NON-SPELL reactions ──
+            //
+            // Quick-Draw gear, [Ambush] / Rengar units and facedown
+            // PERMANENTS revealed as reactions. Play source is derived from
+            // the card's zone/hidden-status (Kennen spec §2/addendum #2)
+            // BEFORE is_hidden is cleared below. ChainManager can't call
             // GameEngine::playSourceFor, so it uses the shared
             // playSourceForZone helper directly, same as
             // EffectExecutor::playIgnoringCost.

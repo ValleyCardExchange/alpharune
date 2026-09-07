@@ -1,0 +1,536 @@
+/// @file test_closed_state_plays.cpp
+/// Closed-State (CR 309.1.a / 337) spell plays driven through the REAL
+/// chain — the whole-branch review's critical finding #1.
+///
+/// `GameEngine::generateClosedStateActions` offers `IntentType::PlayReaction`
+/// intents from three generators: hand spells, trash-replay grants and
+/// [Flow] plays. `GameEngine::executeIntent` has no PlayReaction case, so the
+/// ONLY executor those offers ever reach is
+/// `ChainManager::stepExecuteAndPass`. Before this fix that branch
+/// hand-rolled a play: it paid via the injected `payCardCost` (no Flow, no
+/// Sandswept Tomb staging), searched only `PlayerState::hand` for removal (so
+/// a trash/Flow play was never removed from the trash and came back as a
+/// DUPLICATE trash entry after resolving), never set `banish_on_leave`, never
+/// consumed a granted Flow, and never stamped
+/// `target_battlefield_restriction`.
+///
+/// The fix routes the SPELL half of that branch through
+/// `GameEngine::executePlaySpell` via an injected callback, so one executor
+/// owns every spell play. These tests drive the real FEPR loop:
+///
+///   (a) a [Reaction][Flow] spell in the trash, played in the Closed State,
+///       pays the FLOW cost, leaves the trash exactly once, and ends in
+///       banishment with no duplicate trash entry (CR 829.1.b.1/c.1);
+///   (b) a granted-Flow [Reaction] spell (the Kennen 789 grant shape) played
+///       closed pays the GRANTED cost and consumes the grant;
+///   (c) Star-Crossed (690) played closed as a restricted Sandswept Tomb
+///       (792) offer pays the discounted power and narrows the pair picker;
+///   (d) a plain hand [Reaction] play still behaves exactly as before
+///       (regression).
+
+#include "tests/cards/card_test_fixture.h"
+
+#include "cards/card.h"
+#include "cards/card_registry.h"
+#include "core/events.h"
+#include "core/game_state.h"
+#include "engine/game_engine.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+
+using namespace riftbound;
+using namespace riftbound::test;
+
+namespace {
+
+// Test-local ids, well above the shipped registry (787 cards) and clear of
+// the 90x block test_flow.cpp uses.
+constexpr CardDefId kOpener           = 910;  // [Action], free — opens the chain
+constexpr CardDefId kHandReaction     = 911;  // [Reaction] 1E, plain hand play
+constexpr CardDefId kFlowReaction     = 912;  // [Reaction][Flow] 1E / flow 2E+1[A]
+constexpr CardDefId kGrantedReaction  = 913;  // [Reaction] 3E, no printed Flow
+constexpr CardDefId kHiddenSpell      = 914;  // [Hidden] 2E, revealed facedown
+
+// Real cards the deck this branch exists for actually contains.
+constexpr CardDefId kSandsweptTomb = 792;
+constexpr CardDefId kStarCrossed   = 690;  // [Reaction] 3E + 1 [Chaos], pair-pick
+
+CardDef makeSpellDef(CardDefId id, const char* name, int energy) {
+    CardDef d;
+    d.id = id;
+    d.name = name;
+    d.card_type = CardType::Spell;
+    d.domains = {Domain::Fury};
+    d.energy_cost = energy;
+    return d;
+}
+
+/// Free [Action] spell with no effect. Its only job is to put an item on the
+/// chain so the game enters the Closed State with a real FEPR loop running.
+class OpenerSpell : public SpellCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d = makeSpellDef(kOpener, "Closed State Opener", 0);
+        d.keywords.set(Keyword::Action);
+        return d;
+    }();
+};
+
+class HandReactionSpell : public SpellCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d = makeSpellDef(kHandReaction, "Hand Reaction Test Spell", 1);
+        d.keywords.set(Keyword::Reaction);
+        return d;
+    }();
+};
+
+class FlowReactionSpell : public SpellCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d = makeSpellDef(kFlowReaction, "Flow Reaction Test Spell", 1);
+        d.keywords.set(Keyword::Reaction);
+        d.keywords.set(Keyword::Flow);
+        d.flow_energy = 2;
+        d.flow_power = 1;
+        d.flow_any_domain = true;
+        return d;
+    }();
+};
+
+/// Printed 3E and NO printed [Flow]: the only flow cost it can ever have is a
+/// granted one, so the cost actually charged tells the two apart.
+class GrantedFlowReactionSpell : public SpellCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d = makeSpellDef(kGrantedReaction, "Granted Flow Test Spell", 3);
+        d.keywords.set(Keyword::Reaction);
+        return d;
+    }();
+};
+
+class HiddenTestSpell : public SpellCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d = makeSpellDef(kHiddenSpell, "Hidden Test Spell", 2);
+        d.keywords.set(Keyword::Hidden);
+        return d;
+    }();
+};
+
+/// One agent for both jobs a routed closed-state play needs:
+///   • at a priority query, take the first intent matching `want` (once),
+///     then pass priority forever after;
+///   • at a UNIT target prompt (every option a single-object MakeChoice whose
+///     object is a live unit), record the published option list and take the
+///     first entry. Mirrors test_sandswept_tomb.cpp's TargetPromptRecorder,
+///     including the unit filter — the cost-payment cursor publishes
+///     single-object MakeChoice sets too, but of RUNES.
+class ClosedStateAgent : public AgentInterface {
+public:
+    std::function<bool(const Intent&)> want;
+    bool taken = false;
+    int call_count = 0;
+    std::vector<std::vector<GameObjectId>> unit_prompts;
+
+    Intent selectAction(const GameState& s,
+                        const std::vector<Intent>& legal) override {
+        ++call_count;
+        if (legal.empty()) return Intent{};
+
+        bool is_target_prompt = true;
+        std::vector<GameObjectId> objs;
+        for (const auto& i : legal) {
+            if (i.type != IntentType::MakeChoice || i.chosen_objects.size() != 1) {
+                is_target_prompt = false;
+                break;
+            }
+            auto id = i.chosen_objects.front();
+            if (!s.objectExists(id) || !s.getObject(id).isUnit()) {
+                is_target_prompt = false;
+                break;
+            }
+            objs.push_back(id);
+        }
+        if (is_target_prompt) unit_prompts.push_back(objs);
+
+        if (!taken && want) {
+            for (const auto& i : legal) {
+                if (!want(i)) continue;
+                taken = true;
+                return i;
+            }
+        }
+        for (const auto& i : legal)
+            if (i.type == IntentType::PassPriority) return i;
+        return legal.front();
+    }
+};
+
+}  // namespace
+
+// ─── Fixture ───────────────────────────────────────────────────────────────
+
+class ClosedStatePlaysTest : public CardTestFixture {
+protected:
+    void SetUp() override {
+        CardTestFixture::SetUp();
+        card_registry.registerCard(kOpener, std::make_unique<OpenerSpell>());
+        card_registry.registerCard(kHandReaction,
+                                    std::make_unique<HandReactionSpell>());
+        card_registry.registerCard(kFlowReaction,
+                                    std::make_unique<FlowReactionSpell>());
+        card_registry.registerCard(kGrantedReaction,
+                                    std::make_unique<GrantedFlowReactionSpell>());
+        card_registry.registerCard(kHiddenSpell,
+                                    std::make_unique<HiddenTestSpell>());
+        // executePlaySpell reads card_db_ (printed energy_cost, [Repeat]
+        // ability_text) and CardDB::get throws on an unknown id.
+        card_db.buildFromClasses(card_registry);
+    }
+
+    /// Main Phase / Neutral Open, P1 to act, two battlefields in the ENGINE's
+    /// state (the base fixture's `state` is a different object).
+    void primeMainPhase(GameEngine& engine) {
+        auto& s = engine.mutableState();
+        s.mode             = ModeOfPlay{};
+        s.players[0].id    = P1;
+        s.players[1].id    = P2;
+        s.turn.turn_player = P1;
+        s.turn.turn_number = 3;
+        s.turn.phase       = TurnPhase::MainPhase;
+        s.turn.ns_state    = NeutralShowdownState::Neutral;
+        s.turn.oc_state    = OpenClosedState::Open;
+        BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+        BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+    }
+
+    GameObjectId addReadyRune(GameState& s, PlayerId owner, Domain d) {
+        auto id = s.createObject();
+        auto& r = s.getObject(id);
+        r.owner = owner;
+        r.controller = owner;
+        r.card_type = CardType::Rune;
+        r.name = "Test Rune";
+        r.domains = {d};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{owner};
+        r.is_exhausted = false;
+        return id;
+    }
+
+    GameObjectId addToZoneIn(GameState& s, PlayerId owner, CardDefId def_id,
+                              ZoneType zone) {
+        auto id = s.createObject();
+        auto& obj = s.getObject(id);
+        obj.owner = owner;
+        obj.controller = owner;
+        obj.card_def_id = def_id;
+        const auto& def = card_db.get(def_id);
+        obj.name = def.name;
+        obj.card_type = def.card_type;
+        obj.super_type = def.super_type;
+        obj.keywords = def.keywords;
+        obj.domains = def.domains;
+        obj.tags = def.tags;
+        obj.zone = zone;
+        if (zone == ZoneType::Trash) s.player(owner).trash.push_back(id);
+        else if (zone == ZoneType::Hand) s.player(owner).hand.push_back(id);
+        return id;
+    }
+
+    GameObjectId addUnitIn(GameState& s, PlayerId owner, int at_bf,
+                            const char* name) {
+        auto id = s.createObject();
+        auto& u = s.getObject(id);
+        u.owner = owner;
+        u.controller = owner;
+        u.card_type = CardType::Unit;
+        u.name = name;
+        u.base_might = 2;
+        u.current_might = 2;
+        u.zone = ZoneType::BattlefieldZone;
+        u.location = BattlefieldLocation{static_cast<BattlefieldId>(at_bf)};
+        return id;
+    }
+
+    /// Put the Sandswept Tomb card object on battlefield `bf` and run the
+    /// aura pass, so `friendly_spell_power_discount` is live.
+    void placeTomb(GameEngine& engine, BattlefieldId bf) {
+        auto& s = engine.mutableState();
+        auto id = s.createObject();
+        auto& obj = s.getObject(id);
+        const auto& def = card_db.get(kSandsweptTomb);
+        obj.card_def_id = kSandsweptTomb;
+        obj.name = def.name;
+        obj.card_type = CardType::Battlefield;
+        obj.domains = def.domains;
+        s.battlefields[bf].card_object_id = id;
+        engine.testHook_cleanup();
+    }
+
+    /// Play the free opener from P1's hand. executePlaySpell puts it on the
+    /// chain and runs the FEPR loop, so everything after this call happens
+    /// in the Closed State with `agent1` holding priority first.
+    void openTheChain(GameEngine& engine, GameObjectId opener) {
+        Intent play;
+        play.type = IntentType::PlayActionCard;
+        play.player = P1;
+        play.card = opener;
+        play.play_source = Intent::PlaySource::Hand;
+        engine.testHook_executeIntent(play);
+    }
+
+    static int countExhausted(const GameState& s, PlayerId owner) {
+        int n = 0;
+        for (const auto& [id, obj] : s.objects) {
+            if (obj.controller != owner) continue;
+            if (!obj.isRune()) continue;
+            if (obj.zone != ZoneType::Base) continue;
+            if (obj.is_exhausted) ++n;
+        }
+        return n;
+    }
+
+    static int countReady(const GameState& s, PlayerId owner) {
+        int n = 0;
+        for (const auto& [id, obj] : s.objects) {
+            if (obj.controller != owner) continue;
+            if (!obj.isRune()) continue;
+            if (obj.zone != ZoneType::Base) continue;
+            if (!obj.is_exhausted) ++n;
+        }
+        return n;
+    }
+
+    static int countIn(const std::vector<GameObjectId>& v, GameObjectId id) {
+        return static_cast<int>(std::count(v.begin(), v.end(), id));
+    }
+
+    /// The base fixture's inHand() reads the fixture-owned `state`; these
+    /// tests build into the ENGINE's state.
+    static bool inHandIn(const GameState& s, PlayerId p, GameObjectId id) {
+        const auto& h = s.player(p).hand;
+        return std::find(h.begin(), h.end(), id) != h.end();
+    }
+};
+
+// ─── (a) Flow play out of the trash, in the Closed State ───────────────────
+
+TEST_F(ClosedStatePlaysTest, ClosedFlowPlayPaysFlowCostAndBanishesWithoutDuplicatingTrash) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto spell  = addToZoneIn(s, P1, kFlowReaction, ZoneType::Trash);
+    // 4 ready Fury runes: the flow cost ([E2][P1] in any domain) is payable
+    // with one to spare; the printed 1E would leave a different footprint.
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == spell &&
+               i.flow_source == Intent::FlowSource::Printed;
+    };
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the closed-state generator must offer the trash [Flow] "
+           "[Reaction] play for the agent to take.";
+
+    // ── The FLOW cost, not the printed one ──
+    EXPECT_EQ(countExhausted(s, P1), 2)
+        << "CR 829.1.c.1 — Flow REPLACES the base cost. Exactly the flow "
+           "cost's [E2] may be exhausted; the printed 1E must not be charged "
+           "instead of, or on top of, it.";
+    EXPECT_EQ(countReady(s, P1), 1);
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 1u)
+        << "The flow cost's [P1] recycles exactly one rune.";
+
+    // ── Removed from the trash exactly once, ends banished ──
+    EXPECT_EQ(countIn(s.player(P1).trash, spell), 0)
+        << "The spell was played OUT of the trash — it may not be in the "
+           "trash afterwards. A stale copy here means the play never removed "
+           "it and the post-resolution disposal pushed a duplicate.";
+    EXPECT_EQ(s.getObject(spell).zone, ZoneType::Banishment)
+        << "CR 829.1.b.1 — a spell played for its Flow cost is BANISHED as it "
+           "leaves the chain.";
+    EXPECT_EQ(countIn(s.player(P1).banishment, spell), 1);
+
+    ASSERT_EQ(played.size(), 2u) << "the opener and the reaction";
+    const auto& e = played[1];
+    EXPECT_EQ(e.object, spell);
+    EXPECT_EQ(e.play_source, Intent::PlaySource::Trash)
+        << "A flow play comes out of the trash — CardPlayedEvent must say so.";
+    EXPECT_EQ(e.energy_spent, 2)
+        << "CardPlayedEvent must report the flow energy actually paid, not "
+           "the printed 1.";
+}
+
+// ─── (b) Granted Flow (the Kennen 789 grant shape), in the Closed State ────
+
+TEST_F(ClosedStatePlaysTest, ClosedGrantedFlowPlayPaysTheGrantAndConsumesIt) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto spell  = addToZoneIn(s, P1, kGrantedReaction, ZoneType::Trash);
+
+    // The grant Kennen, Storm of Shuriken (789) writes: "until end of turn, a
+    // spell in your trash gains [Flow] <cost>". Written straight onto the
+    // object here — Kennen's own resolution is not what's under test, and a
+    // cost that differs from the printed 3E is what tells the two apart.
+    GameObject::GrantedFlow gf;
+    gf.energy = 1;
+    gf.power = 0;
+    gf.power_domain = Domain::Fury;
+    gf.any_domain = false;
+    gf.valid_on_turn = s.turn.turn_number;
+    s.getObject(spell).granted_flow = gf;
+
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == spell &&
+               i.flow_source == Intent::FlowSource::Granted;
+    };
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the granted flow play must be offered in the Closed State.";
+
+    EXPECT_EQ(countExhausted(s, P1), 1)
+        << "The GRANTED flow cost is [E1] — the printed 3E must not be "
+           "charged in its place.";
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "The granted cost has no power component; nothing may be recycled.";
+    EXPECT_FALSE(s.getObject(spell).granted_flow.has_value())
+        << "A granted Flow is consumed by the play it paid for.";
+    EXPECT_EQ(countIn(s.player(P1).trash, spell), 0);
+    EXPECT_EQ(s.getObject(spell).zone, ZoneType::Banishment)
+        << "A granted Flow play is still a Flow play — CR 829.1.b.1 banishes "
+           "it as it leaves the chain.";
+}
+
+// ─── (c) Star-Crossed as a restricted Sandswept Tomb offer, closed ─────────
+
+TEST_F(ClosedStatePlaysTest, ClosedRestrictedStarCrossedPaysTheDiscountAndNarrowsThePicker) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    placeTomb(engine, 0);
+    auto tomb_friendly = addUnitIn(s, P1, /*at_bf=*/0, "Friendly At Tomb");
+    auto far_friendly  = addUnitIn(s, P1, /*at_bf=*/1, "Friendly Elsewhere");
+    auto enemy         = addUnitIn(s, P2, /*at_bf=*/1, "Enemy");
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto spell  = addToZoneIn(s, P1, kStarCrossed, ZoneType::Hand);
+
+    // 3 ORDER runes: the [3] energy is covered, the [1] Chaos power is not —
+    // so only the discounted, restricted play is offered at all.
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Order);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == spell &&
+               i.target_battlefield_restriction.has_value();
+    };
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the restricted Tomb offer must reach the Closed State — "
+           "Star-Crossed is a [Reaction] and the deck this branch exists for "
+           "plays it off the Tomb.";
+
+    EXPECT_EQ(countExhausted(s, P1), 3);
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u)
+        << "Sandswept Tomb's [A] discount is charged: nothing is recycled for "
+           "the printed [1] power. A recycled rune means the closed-state "
+           "path paid the undiscounted cost.";
+
+    ASSERT_EQ(agent1.unit_prompts.size(), 2u)
+        << "Star-Crossed publishes two unit picks: the friendly, then the "
+           "enemy.";
+    EXPECT_EQ(agent1.unit_prompts[0], std::vector<GameObjectId>{tomb_friendly})
+        << "The commitment the discount was paid for must reach the resolve-"
+           "time picker: the A list is narrowed to friendly units at the Tomb.";
+    EXPECT_EQ(agent1.unit_prompts[1], std::vector<GameObjectId>{enemy});
+
+    EXPECT_EQ(s.getObject(tomb_friendly).zone, ZoneType::Hand);
+    EXPECT_EQ(s.getObject(enemy).zone, ZoneType::Hand);
+    EXPECT_TRUE(s.getObject(far_friendly).isAtBattlefield());
+}
+
+// ─── (d) Regression: the plain hand [Reaction] play is unchanged ───────────
+
+TEST_F(ClosedStatePlaysTest, ClosedHandReactionPlayStillPaysAndTrashes) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto spell  = addToZoneIn(s, P1, kHandReaction, ZoneType::Hand);
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == spell;
+    };
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken);
+    EXPECT_FALSE(inHandIn(s, P1, spell)) << "the reaction left the hand";
+    EXPECT_EQ(countExhausted(s, P1), 1)
+        << "the printed [1] is charged, exactly as before";
+    EXPECT_EQ(s.player(P1).rune_deck.size(), 0u);
+    EXPECT_EQ(s.getObject(spell).zone, ZoneType::Trash)
+        << "CR 359.3 — a spell that was NOT played for a Flow cost trashes "
+           "when it leaves the chain.";
+    EXPECT_EQ(countIn(s.player(P1).trash, spell), 1);
+
+    ASSERT_EQ(played.size(), 2u);
+    EXPECT_EQ(played[1].object, spell);
+    EXPECT_EQ(played[1].play_source, Intent::PlaySource::Hand);
+    EXPECT_EQ(played[1].energy_spent, 1);
+}
