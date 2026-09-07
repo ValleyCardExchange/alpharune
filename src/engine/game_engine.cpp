@@ -854,23 +854,61 @@ GameEngine::MainPhaseAdvance GameEngine::advanceMainPhase(int& action_count) {
 
     // If in showdown, run it. Sub-calls still use the recursive path
     // until C-1 commit 6 converts the chain / combat subsystems.
-    for (auto& bf : state_.battlefields) {
-        if (bf.showdown_staged && !bf.showdown_in_progress &&
-            !bf.combat_staged) {
-            runShowdown(bf.id);
-            if (state_.game_over) {
-                adv.kind = MainPhaseAdvance::Kind::Done;
-                return adv;
-            }
-            bf.showdown_staged = false;
+    //
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): the body
+    // of this loop resolves whole showdowns and combats, and card
+    // resolution can APPEND a battlefield (Baron Nashor spawns the Baron
+    // Pit via EffectExecutor::addBattlefieldToken). `battlefields` is a
+    // deque so existing elements never move, but the range-for's own
+    // iterator is still not something to bet a game on across arbitrary
+    // card resolution — and a future container change must not silently
+    // re-open the use-after-free this cost us. So: snapshot the ids up
+    // front, and re-fetch each battlefield by id immediately before every
+    // read and every write. Nothing here holds a reference across a
+    // runShowdown / runCombat call. Battlefields appended DURING this
+    // pass are handled on the next call into advanceMainPhase, which is
+    // the same behaviour the range-for had.
+    std::vector<BattlefieldId> staged_ids;
+    staged_ids.reserve(state_.battlefields.size());
+    for (const auto& bf : state_.battlefields) staged_ids.push_back(bf.id);
+
+    // Nothing removes battlefields today, but re-fetch defensively rather
+    // than throwing out of the main-phase driver if that ever changes.
+    auto find_bf = [this](BattlefieldId id) -> BattlefieldState* {
+        for (auto& b : state_.battlefields) {
+            if (b.id == id) return &b;
         }
-        if (bf.combat_staged && !bf.combat_in_progress) {
-            runCombat(bf.id);
+        return nullptr;
+    };
+
+    for (BattlefieldId staged_id : staged_ids) {
+        bool want_showdown = false;
+        if (const BattlefieldState* bf = find_bf(staged_id)) {
+            want_showdown = bf->showdown_staged && !bf->showdown_in_progress &&
+                            !bf->combat_staged;
+        }
+        if (want_showdown) {
+            runShowdown(staged_id);
             if (state_.game_over) {
                 adv.kind = MainPhaseAdvance::Kind::Done;
                 return adv;
             }
-            bf.combat_staged = false;
+            if (BattlefieldState* bf = find_bf(staged_id))
+                bf->showdown_staged = false;
+        }
+
+        bool want_combat = false;
+        if (const BattlefieldState* bf = find_bf(staged_id)) {
+            want_combat = bf->combat_staged && !bf->combat_in_progress;
+        }
+        if (want_combat) {
+            runCombat(staged_id);
+            if (state_.game_over) {
+                adv.kind = MainPhaseAdvance::Kind::Done;
+                return adv;
+            }
+            if (BattlefieldState* bf = find_bf(staged_id))
+                bf->combat_staged = false;
         }
     }
 
@@ -3797,21 +3835,33 @@ std::vector<Intent> GameEngine::generateCombatDamageActions(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void GameEngine::runShowdown(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
-    events_.logTrace("SHOWDOWN: BF#" + std::to_string(bf_id) +
-                     (bf.combat_staged ? " (combat)" : " (non-combat)"));
-
-    bf.showdown_in_progress = true;
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): no
+    // `BattlefieldState&` is held across runShowdownLoop() or
+    // scoreConquer(). Card resolution inside either can APPEND a
+    // battlefield (Baron Nashor's Baron Pit), and a reference taken
+    // before the call used to become dangling — the write-back below
+    // (`showdown_in_progress = false`, `controller`, `is_contested`)
+    // landed in freed memory. The deque makes appends non-relocating;
+    // re-fetching by id makes this function correct even if that
+    // container choice is ever revisited.
+    bool combat_staged = false;
+    {
+        auto& bf = getBattlefield(bf_id);
+        combat_staged = bf.combat_staged;
+        events_.logTrace("SHOWDOWN: BF#" + std::to_string(bf_id) +
+                         (combat_staged ? " (combat)" : " (non-combat)"));
+        bf.showdown_in_progress = true;
+    }
     state_.turn.ns_state = NeutralShowdownState::Showdown;
     state_.turn.oc_state = OpenClosedState::Open;
 
-    events_.emit(ShowdownStartedEvent{bf_id, bf.combat_staged});
+    events_.emit(ShowdownStartedEvent{bf_id, combat_staged});
 
     // Showdown loop: players alternate focus, playing Action/Reaction spells.
     // Showdown closes when all players pass focus consecutively (CR 348.1).
     runShowdownLoop(bf_id);
 
-    bf.showdown_in_progress = false;
+    getBattlefield(bf_id).showdown_in_progress = false;  // re-fetch: see above
     state_.turn.ns_state = NeutralShowdownState::Neutral;
     state_.turn.oc_state = OpenClosedState::Open;
     events_.emit(ShowdownEndedEvent{bf_id});
@@ -3826,9 +3876,13 @@ void GameEngine::runShowdown(BattlefieldId bf_id) {
     if (p1_units.empty() && !p2_units.empty()) sole_player = PlayerId::Player2;
 
     if (sole_player != PlayerId::None) {
-        auto old_controller = bf.controller;
-        bf.controller = sole_player;
-        bf.is_contested = false;
+        std::optional<PlayerId> old_controller;
+        {
+            auto& bf = getBattlefield(bf_id);  // re-fetch: see above
+            old_controller = bf.controller;
+            bf.controller = sole_player;
+            bf.is_contested = false;
+        }
 
         events_.emit(ControlChangedEvent{bf_id, old_controller, sole_player});
 
@@ -3961,14 +4015,29 @@ void GameEngine::runShowdownLoop(BattlefieldId bf_id) {
 }
 
 void GameEngine::runCombat(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
-    bf.combat_in_progress = true;
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): this
+    // function used to hold one `auto& bf` across runChain(),
+    // runShowdownLoop(), combatDamageStep() and combatResolutionStep() —
+    // all of which resolve cards, and card resolution can APPEND a
+    // battlefield (Baron Nashor's Baron Pit). Every `bf.combat_phase =`
+    // write after such a call went into freed memory. Attacker/defender
+    // are read once into locals (they are set here and not changed until
+    // combatResolutionStep clears them) and the battlefield is re-fetched
+    // by id immediately before each write.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        auto& bf = getBattlefield(bf_id);
+        bf.combat_in_progress = true;
 
-    // Determine attacker/defender (CR 459.2.b)
-    bf.attacker = bf.contested_by;
-    bf.defender = opponent(bf.contested_by);
+        // Determine attacker/defender (CR 459.2.b)
+        bf.attacker = bf.contested_by;
+        bf.defender = opponent(bf.contested_by);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
     events_.logTrace("COMBAT: BF#" + std::to_string(bf_id) + " attacker=" +
-                     toString(*bf.attacker) + " defender=" + toString(*bf.defender));
+                     toString(attacker) + " defender=" + toString(defender));
 
     // Assign combat designations to units
     for (auto& [id, obj] : state_.objects) {
@@ -3976,9 +4045,9 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
         auto unit_bf = obj.battlefieldId();
         if (!unit_bf || *unit_bf != bf_id) continue;
 
-        if (obj.controller == *bf.attacker) {
+        if (obj.controller == attacker) {
             obj.combat_designation = CombatDesignation::Attacker;
-        } else if (obj.controller == *bf.defender) {
+        } else if (obj.controller == defender) {
             obj.combat_designation = CombatDesignation::Defender;
         }
     }
@@ -3990,7 +4059,7 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
         }
     }
 
-    events_.emit(CombatStartedEvent{bf_id, *bf.attacker, *bf.defender});
+    events_.emit(CombatStartedEvent{bf_id, attacker, defender});
 
     // Drain any WhenIAttack / WhenIDefend / WhenIAttackOrDefend triggers
     // that the CombatStartedEvent dispatched to the chain (CR 459.2.d).
@@ -4011,45 +4080,57 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
     // Re-check combat viability AFTER triggers resolve — kills or
     // bounces in trigger resolution may have emptied one side.
     {
-        auto att_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-        auto def_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+        auto att_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+        auto def_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
         if (att_after_trig.empty() || def_after_trig.empty()) {
-            bf.combat_phase = CombatPhase::ResolutionStep;
+            // re-fetch after runChain(): see the lifetime note above
+            getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
             combatResolutionStep(bf_id);
             return;
         }
     }
 
     // Step 1: Combat Showdown — players can play Action/Reaction spells
-    bf.combat_phase = CombatPhase::ShowdownStep;
+    getBattlefield(bf_id).combat_phase = CombatPhase::ShowdownStep;
     runShowdownLoop(bf_id);
 
     // After showdown: check if combat can continue (CR 460.1)
     // Damage step only occurs if both sides still have units
-    auto att_check = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_check = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_check = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_check = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (att_check.empty() || def_check.empty()) {
         // One side was eliminated during showdown — skip damage, go to resolution
-        bf.combat_phase = CombatPhase::ResolutionStep;
+        // re-fetch after runShowdownLoop(): see the lifetime note above
+        getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
         combatResolutionStep(bf_id);
         return;
     }
 
     // Step 2: Combat Damage
-    bf.combat_phase = CombatPhase::DamageStep;
+    getBattlefield(bf_id).combat_phase = CombatPhase::DamageStep;
     combatDamageStep(bf_id);
 
-    // Step 3: Resolution
-    bf.combat_phase = CombatPhase::ResolutionStep;
+    // Step 3: Resolution — re-fetch after combatDamageStep()
+    getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
     combatResolutionStep(bf_id);
 }
 
 void GameEngine::combatDamageStep(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): read the
+    // seats out ONCE, up front. runOneSide() below resolves damage
+    // assignments — card resolution, which can append a battlefield — so
+    // no BattlefieldState& survives past this block.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        const auto& bf = getBattlefield(bf_id);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
 
-    auto att_units = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_units = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_units = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_units = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (att_units.empty() || def_units.empty()) return;
 
@@ -4126,8 +4207,8 @@ void GameEngine::combatDamageStep(BattlefieldId bf_id) {
     };
 
     // Attacker assigns damage to defender's units, defender assigns to attacker's
-    runOneSide(*bf.attacker, att_might, def_units);
-    runOneSide(*bf.defender, def_might, att_units);
+    runOneSide(attacker, att_might, def_units);
+    runOneSide(defender, def_might, att_units);
 }
 
 GameEngine::CombatDamageAdvance GameEngine::testHook_advanceCombatDamage(
@@ -4271,7 +4352,18 @@ void GameEngine::resolveCombatDamageDecision(const Intent& chosen) {
 }
 
 void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): the seats
+    // are read once here, and the battlefield is re-fetched by id after
+    // processLethalDamage() / moveUnit() / scoreConquer() rather than held
+    // across them — any of those can resolve a card that appends a
+    // battlefield.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        const auto& bf = getBattlefield(bf_id);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
 
     // Combat Cleanup: heal all units, kill lethally damaged (CR 461.1.a)
     processLethalDamage();
@@ -4287,38 +4379,38 @@ void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
     }
 
     // Recall attackers if defenders still present (CR 461.1.a.2)
-    auto att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (!att_remaining.empty() && !def_remaining.empty()) {
         // Both still have units = a tie. Normally only attackers recall
         // (CR 461.1.a.2). Symbol of the Solari (227): if the attacker controls
         // it, recall ALL units (attackers AND defenders) instead.
-        const bool recall_all = state_.player(*bf.attacker).recall_all_on_attacker_tie;
+        const bool recall_all = state_.player(attacker).recall_all_on_attacker_tie;
         for (auto uid : att_remaining) {
-            moveUnit(uid, BaseLocation{*bf.attacker});
-            events_.emit(UnitMovedEvent{uid, *bf.attacker,
-                BattlefieldLocation{bf_id}, BaseLocation{*bf.attacker}, false});
+            moveUnit(uid, BaseLocation{attacker});
+            events_.emit(UnitMovedEvent{uid, attacker,
+                BattlefieldLocation{bf_id}, BaseLocation{attacker}, false});
         }
         if (recall_all) {
             for (auto uid : def_remaining) {
-                moveUnit(uid, BaseLocation{*bf.defender});
-                events_.emit(UnitMovedEvent{uid, *bf.defender,
-                    BattlefieldLocation{bf_id}, BaseLocation{*bf.defender}, false});
+                moveUnit(uid, BaseLocation{defender});
+                events_.emit(UnitMovedEvent{uid, defender,
+                    BattlefieldLocation{bf_id}, BaseLocation{defender}, false});
             }
             events_.logTrace("SYMBOL OF THE SOLARI: attacker tie -> recall ALL units");
         }
     }
 
     // Determine combat result (CR 461.3)
-    att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     PlayerId combat_winner = PlayerId::None;
     if (!att_remaining.empty() && def_remaining.empty()) {
-        combat_winner = *bf.attacker;
+        combat_winner = attacker;
     } else if (att_remaining.empty() && !def_remaining.empty()) {
-        combat_winner = *bf.defender;
+        combat_winner = defender;
     }
 
     // Clear combat designations
@@ -4329,23 +4421,31 @@ void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
         }
     }
 
-    // End combat
-    bf.combat_in_progress = false;
-    bf.combat_phase = CombatPhase::None;
-    bf.is_contested = false;
-    bf.attacker = std::nullopt;
-    bf.defender = std::nullopt;
+    // End combat — re-fetch: moveUnit / processLethalDamage above can
+    // resolve cards, which can append a battlefield.
+    {
+        auto& bf = getBattlefield(bf_id);
+        bf.combat_in_progress = false;
+        bf.combat_phase = CombatPhase::None;
+        bf.is_contested = false;
+        bf.attacker = std::nullopt;
+        bf.defender = std::nullopt;
+    }
 
     events_.emit(CombatEndedEvent{bf_id, combat_winner});
 
     // Establish control (CR 461.5)
     if (combat_winner != PlayerId::None) {
-        auto old_controller = bf.controller;
-        bf.controller = combat_winner;
+        std::optional<PlayerId> old_controller;
+        {
+            auto& bf = getBattlefield(bf_id);  // re-fetch after the emit
+            old_controller = bf.controller;
+            bf.controller = combat_winner;
+        }
         events_.emit(ControlChangedEvent{bf_id, old_controller, combat_winner});
         scoreConquer(combat_winner, bf_id);
     } else if (att_remaining.empty() && def_remaining.empty()) {
-        bf.controller = std::nullopt;
+        getBattlefield(bf_id).controller = std::nullopt;
     }
 
     state_.turn.ns_state = NeutralShowdownState::Neutral;
@@ -6473,6 +6573,14 @@ PlayerId GameEngine::activePlayer() const {
     return state_.turn.turn_player;
 }
 
+// LIFETIME CONTRACT: the returned reference is stable across appends to
+// `state_.battlefields` (it is a std::deque — see game_state.h), but it is
+// NOT a handle to hold across arbitrary card resolution: a battlefield can
+// be replaced or swapped (CR 438), and holding a reference across a
+// showdown/combat is exactly the pattern that produced the use-after-free
+// documented in .superpowers/sdd/2026-09-07-corpus-evaluator/crash-analysis.md
+// when the container was a vector. Re-fetch by id after any call that can
+// resolve a card.
 BattlefieldState& GameEngine::getBattlefield(BattlefieldId id) {
     for (auto& bf : state_.battlefields) {
         if (bf.id == id) return bf;

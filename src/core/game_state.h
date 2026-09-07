@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -527,8 +528,27 @@ struct GameState {
     // Players (indexed by playerIndex())
     PlayerState players[2];
 
-    // Board
-    std::vector<BattlefieldState> battlefields;
+    // Board.
+    //
+    // std::deque, NOT std::vector, and this is load-bearing: appending a
+    // battlefield must not invalidate references, pointers or iterators to
+    // the ones already there. `EffectExecutor::addBattlefieldToken` grows
+    // this container MID-GAME (Baron Nashor's "add the Baron Pit
+    // battlefield token to the board"), while the engine holds a
+    // `BattlefieldState&` across card resolution in the staged-battlefield
+    // loop, `runShowdown` and `runCombat`. With a vector — which
+    // `setupBattlefields` leaves at size == capacity == 2 — that append is
+    // a guaranteed reallocation, and those references become dangling:
+    // reads returned garbage battlefield ids ("Battlefield not found:
+    // 3691939024") and writes landed in freed memory. deque's append never
+    // relocates existing elements, which makes every `getBattlefield`
+    // caller correct by construction.
+    //
+    // Guarded by tests/test_battlefield_stability.cpp. Do not "fix" a
+    // future recurrence with reserve() — that hides the hazard behind a
+    // capacity number and the next battlefield-token card reopens it.
+    // Root cause: .superpowers/sdd/2026-09-07-corpus-evaluator/crash-analysis.md
+    std::deque<BattlefieldState> battlefields;
 
     // All game objects (the object pool)
     std::unordered_map<GameObjectId, GameObject> objects;
