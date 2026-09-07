@@ -4867,38 +4867,36 @@ void GameEngine::drawCards(PlayerId player, int count) {
     int drawn = 0;
     for (int i = 0; i < count; ++i) {
         if (ps.main_deck.empty()) {
-            // Burn Out (CR 431.2): recycle trash into deck, then the
-            // burning-out player chooses an opponent to gain 1 point
-            // (CR 431.2.c). 1v1 = exactly one opponent. CR 431.3: if
-            // opponent reaches victory score they win immediately.
+            // Burn Out (CR 431.2/431.3) — shared with EffectExecutor::burnCards.
             if (ps.trash.empty()) {
                 events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
                                  " deck AND trash empty, cannot draw");
                 break; // truly empty — nothing to do
             }
-            ps.burned_out = true;
-            for (auto card_id : ps.trash) {
-                state_.getObject(card_id).zone = ZoneType::MainDeck;
-                ps.main_deck.push_back(card_id);
+            if (effect_executor_) {
+                effect_executor_->burnOut(player);
+            } else {
+                // Defensive fallback, not a second copy of the burn-out
+                // LOGIC: some test-only call paths (BurnOutScoringTest's
+                // testHook_scoreConquer / testHook_drawPhase) construct a
+                // bare GameEngine and invoke internal hooks directly
+                // without ever running initSubsystems(), so effect_executor_
+                // stays null here. assert() alone doesn't help — this
+                // project's test build is Release/-DNDEBUG, so it would
+                // compile out and the call below would segfault instead
+                // (verified empirically). Route through a throwaway
+                // executor bound to this engine's own state/rng so
+                // EffectExecutor::burnOut stays the single implementation
+                // (see task-6-7-report.md for the caller audit).
+                assert(false &&
+                       "GameEngine::drawCards: effect_executor_ is null — "
+                       "initSubsystems() was not called before this draw; "
+                       "falling back to a throwaway EffectExecutor");
+                EffectExecutor temp_executor(state_, events_, card_db_, &card_registry_);
+                temp_executor.setRng(&rng_);
+                temp_executor.burnOut(player);
             }
-            ps.trash.clear();
-            shuffleDeck(player);
-            PlayerId opp_id = opponent(player);
-            auto& opp_ps = state_.player(opp_id);
-            opp_ps.score++;
-            events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
-                             " deck empty, shuffled trash; " +
-                             toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
-                             std::to_string(opp_ps.score));
-            if (opp_ps.score >= state_.mode.victory_score &&
-                opp_ps.score > ps.score) {
-                state_.game_over = true;
-                state_.winner = opp_id;
-                state_.game_over_reason = std::string(toString(opp_id)) +
-                                           " wins via burn-out point (CR 431.3)";
-                events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
-                return;
-            }
+            if (state_.game_over) return;
             // If deck still empty after shuffle (shouldn't happen), stop
             if (ps.main_deck.empty()) break;
         }

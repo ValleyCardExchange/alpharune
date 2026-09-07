@@ -217,37 +217,10 @@ void EffectExecutor::drawCards(PlayerId player, int count) {
     int drawn = 0;
     for (int i = 0; i < count; ++i) {
         if (ps.main_deck.empty()) {
-            // Burn Out (CR 431.2): recycle trash into deck, then opponent
-            // gains 1 point (CR 431.2.c — burning-out player chooses an
-            // opponent; in 1v1 there is exactly one). CR 431.3: if this
-            // gain puts opponent at or past victory score with more
-            // points than us, they win immediately.
+            // Burn Out (CR 431.2/431.3) — shared with burnCards().
             if (ps.trash.empty()) break;
-            ps.burned_out = true;
-            for (auto cid : ps.trash) {
-                state_.getObject(cid).zone = ZoneType::MainDeck;
-                ps.main_deck.push_back(cid);
-            }
-            ps.trash.clear();
-            if (rng_) {
-                std::shuffle(ps.main_deck.begin(), ps.main_deck.end(), *rng_);
-            }
-            PlayerId opp_id = opponent(player);
-            auto& opp_ps = state_.player(opp_id);
-            opp_ps.score++;
-            events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
-                             " deck empty, shuffled trash; " +
-                             toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
-                             std::to_string(opp_ps.score));
-            if (opp_ps.score >= state_.mode.victory_score &&
-                opp_ps.score > ps.score) {
-                state_.game_over = true;
-                state_.winner = opp_id;
-                state_.game_over_reason = std::string(toString(opp_id)) +
-                                           " wins via burn-out point (CR 431.3)";
-                events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
-                return;
-            }
+            burnOut(player);
+            if (state_.game_over) return;
             if (ps.main_deck.empty()) break;
         }
         auto card_id = ps.main_deck.back();
@@ -1247,11 +1220,56 @@ void EffectExecutor::disempowerObject(GameObjectId target) {
 }
 
 // ── Burn N (CR 440) ──
-// Scaffolding only: behaviour lands test-first in a later task.
-void EffectExecutor::burnCards(PlayerId /*player*/, int /*count*/) {
+void EffectExecutor::burnOut(PlayerId player) {
+    // Burn Out (CR 431.2): recycle trash into deck, then opponent gains
+    // 1 point (CR 431.2.c — burning-out player chooses an opponent; in
+    // 1v1 there is exactly one). CR 431.3: if this gain puts opponent at
+    // or past victory score with more points than us, they win
+    // immediately. No-op if trash is also empty — nothing to recycle.
+    auto& ps = state_.player(player);
+    if (ps.trash.empty()) return;
+    ps.burned_out = true;
+    for (auto cid : ps.trash) {
+        state_.getObject(cid).zone = ZoneType::MainDeck;
+        ps.main_deck.push_back(cid);
+    }
+    ps.trash.clear();
+    if (rng_) {
+        std::shuffle(ps.main_deck.begin(), ps.main_deck.end(), *rng_);
+    }
+    PlayerId opp_id = opponent(player);
+    auto& opp_ps = state_.player(opp_id);
+    opp_ps.score++;
+    events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
+                     " deck empty, shuffled trash; " +
+                     toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
+                     std::to_string(opp_ps.score));
+    if (opp_ps.score >= state_.mode.victory_score &&
+        opp_ps.score > ps.score) {
+        state_.game_over = true;
+        state_.winner = opp_id;
+        state_.game_over_reason = std::string(toString(opp_id)) +
+                                   " wins via burn-out point (CR 431.3)";
+        events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
+    }
 }
 
-void EffectExecutor::burnOut(PlayerId /*player*/) {
+void EffectExecutor::burnCards(PlayerId player, int count) {
+    auto& ps = state_.player(player);
+    for (int i = 0; i < count; ++i) {
+        if (ps.main_deck.empty()) {
+            burnOut(player);
+            if (state_.game_over) return;
+            if (ps.main_deck.empty()) break;  // deck AND trash empty — stop
+        }
+        auto card_id = ps.main_deck.back();
+        ps.main_deck.pop_back();
+        auto& obj = state_.getObject(card_id);
+        obj.zone = ZoneType::Trash;
+        obj.location = std::nullopt;
+        ps.trash.push_back(card_id);
+        events_.logTrace("BURN: " + obj.name + " (id=" + std::to_string(card_id) + ")");
+    }
 }
 
 } // namespace riftbound
