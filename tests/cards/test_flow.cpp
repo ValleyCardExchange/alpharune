@@ -51,6 +51,11 @@ namespace {
 constexpr CardDefId kFlowActionSpell   = 901;
 constexpr CardDefId kFlowReactionSpell = 902;
 
+// Real, already-registered counter spells used to drive Task 5's disposal
+// tests through the actual chain.
+constexpr CardDefId kHardBargainId = 457;  // self-disposing (card edit)
+constexpr CardDefId kRepulseId     = 668;  // routes through counterChainTop
+
 /// Base shape for both test spells: printed 1E (cheap, so "only the printed
 /// cost is affordable" is a reachable state), Flow 2E + 1 power in ANY
 /// domain. No targets, no ability text — the point is the cost path, not the
@@ -491,6 +496,151 @@ TEST_F(FlowTest, GrantedAndPrintedFlowYieldTwoIntentsEachPayingItsOwnCost) {
     EXPECT_FALSE(s.getObject(spell).granted_flow.has_value())
         << "A granted Flow is consumed by the play — it must be cleared so a "
            "later return to the trash can't reuse it.";
+}
+
+// ─── Task 5, Test #9: banish on resolve ────────────────────────────────────
+
+TEST_F(FlowTest, ResolvingAFlowPlayedSpellBanishesItInsteadOfTrashing) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    std::vector<SpellResolvedEvent> resolved;
+    auto conn = events.on_spell_resolved.connect(
+        [&](const SpellResolvedEvent& e) { resolved.push_back(e); });
+
+    auto offers = intentsFor(engine.generateLegalActions(), spell);
+    ASSERT_EQ(offers.size(), 1u) << "sanity: the flow play must be offered";
+
+    // FirstChoiceAgent always passes priority, so a single call to
+    // testHook_executeIntent drives the flow play all the way through the
+    // chain to resolution — nothing else is legal for either player.
+    engine.testHook_executeIntent(offers[0]);
+
+    ASSERT_EQ(resolved.size(), 1u)
+        << "the flow spell must still resolve (SpellResolvedEvent) exactly "
+           "like any other spell — CR 829.1.b.1 changes only its disposal.";
+    EXPECT_EQ(resolved[0].spell, spell);
+
+    auto& ps = s.player(P1);
+    EXPECT_EQ(s.getObject(spell).zone, ZoneType::Banishment)
+        << "CR 829.1.b.1 — a spell played for its Flow cost is banished on "
+           "leaving the chain after resolving, not trashed.";
+    EXPECT_NE(std::find(ps.banishment.begin(), ps.banishment.end(), spell),
+              ps.banishment.end())
+        << "must be recorded in PlayerState::banishment.";
+    EXPECT_EQ(std::find(ps.trash.begin(), ps.trash.end(), spell), ps.trash.end())
+        << "must NOT also land in trash.";
+}
+
+// ─── Task 5, Test #10: banish on counter ───────────────────────────────────
+
+// Hard Bargain (457) disposes of its target itself (not via
+// counterChainTop) — this exercises the card edit directly, through the
+// real chain (ChainManager::processFEPR), so both the target's banishment
+// AND Hard Bargain's own ordinary resolve-to-trash are real engine
+// behavior, not asserted by hand.
+TEST_F(FlowTest, HardBargainCountersAFlowSpellToBanishmentWhenTargetCantAfford) {
+    auto target = pushSpellOnChain(P2, kFlowActionSpell);
+    state.chain.items.back().banish_on_leave = true;  // Task 4's flag, set by hand here
+    addRune(P2, Domain::Chaos);  // only 1 ready rune — can't afford the 2E rescue
+
+    auto hb_src = state.createObject();
+    {
+        auto& hb = state.getObject(hb_src);
+        hb.owner = P1;
+        hb.controller = P1;
+        hb.card_type = CardType::Spell;
+        hb.card_def_id = kHardBargainId;
+        hb.name = card_db.get(kHardBargainId).name;
+    }
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    FirstChoiceAgent agent;
+    driveThroughChain(hb_src, P1, {}, agent, exec);
+
+    EXPECT_TRUE(state.chain.items.empty());
+
+    EXPECT_EQ(state.getObject(target).zone, ZoneType::Banishment)
+        << "the Flow-played target must be banished, not trashed, when "
+           "Hard Bargain counters it.";
+    auto& target_ps = state.player(P2);
+    EXPECT_NE(std::find(target_ps.banishment.begin(), target_ps.banishment.end(),
+                         target),
+              target_ps.banishment.end());
+    EXPECT_EQ(std::find(target_ps.trash.begin(), target_ps.trash.end(), target),
+              target_ps.trash.end());
+
+    EXPECT_EQ(state.getObject(hb_src).zone, ZoneType::Trash)
+        << "Hard Bargain itself is not Flow-played — it resolves and trashes "
+           "normally.";
+    auto& hb_ps = state.player(P1);
+    EXPECT_NE(std::find(hb_ps.trash.begin(), hb_ps.trash.end(), hb_src),
+              hb_ps.trash.end());
+}
+
+// Repulse (668) is one of six cards that share `counterChainTop` — this
+// exercises that shared helper's banish branch directly (precedent:
+// tests/cards/test_counter_spells.cpp's RepulseTest.CountersOnResolve).
+TEST_F(FlowTest, RepulseCountersAFlowSpellToBanishmentViaCounterChainTop) {
+    auto unit = addUnit(P1, kInvalidId, /*might=*/3, /*at_bf=*/0);
+    auto target = pushSpellOnChain(P2, kFlowActionSpell, {unit});
+    state.chain.items.back().banish_on_leave = true;
+
+    auto src = state.createObject();
+    state.getObject(src).owner = P1;
+    state.getObject(src).controller = P1;
+
+    EffectExecutor exec(state, events, card_db);
+    invokeOnResolve(src, kRepulseId, P1, {}, exec);
+
+    EXPECT_TRUE(state.chain.items.empty());
+    EXPECT_EQ(state.getObject(target).zone, ZoneType::Banishment);
+    auto& ps = state.player(P2);
+    EXPECT_NE(std::find(ps.banishment.begin(), ps.banishment.end(), target),
+              ps.banishment.end());
+    EXPECT_EQ(std::find(ps.trash.begin(), ps.trash.end(), target), ps.trash.end());
+}
+
+// ─── Task 5, Test #11: granted flow expires when the turn advances ────────
+
+TEST_F(FlowTest, GrantedFlowExpiresWhenTurnNumberAdvances) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto spell = addToTrash(s, P1, kFlowActionSpell);
+    for (int i = 0; i < 4; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    GameObject::GrantedFlow gf;
+    gf.energy = 1;
+    gf.any_domain = true;
+    gf.valid_on_turn = s.turn.turn_number;
+    s.getObject(spell).granted_flow = gf;
+
+    auto hasGrantedOffer = [&]() {
+        for (const auto& o : intentsFor(engine.generateLegalActions(), spell))
+            if (o.flow_source == Intent::FlowSource::Granted) return true;
+        return false;
+    };
+
+    ASSERT_TRUE(hasGrantedOffer())
+        << "sanity: a grant stamped with the CURRENT turn number is offered.";
+
+    s.turn.turn_number++;
+    EXPECT_FALSE(hasGrantedOffer())
+        << "CR 829.1.c.3 / addendum #1 — a granted flow offered THIS turn "
+           "must no longer be live once the turn number advances (evaluated "
+           "expiry, not scheduled).";
 }
 
 // ─── Fix round 1 — the execution branch validates its intent ───────────────

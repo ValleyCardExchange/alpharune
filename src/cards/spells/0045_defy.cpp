@@ -46,15 +46,10 @@ public:
         }
 
         auto countered = top.source;
+        bool banish_on_leave = top.banish_on_leave;  // capture BEFORE the pop
         revertCounteredPlay(ctx, top);  // CR 425.1.b
         ctx.state.chain.items.pop_back();
-        if (ctx.state.objectExists(countered)) {
-            auto& obj = ctx.state.getObject(countered);
-            ctx.events.logTrace("COUNTER: " + obj.name + " countered by Defy -> trash");
-            obj.zone = ZoneType::Trash;
-            obj.location = std::nullopt;
-            ctx.state.player(obj.owner).trash.push_back(countered);
-        }
+        disposeCounteredSpell(ctx, countered, banish_on_leave);
         // NOTE: removed the previously-present (un-printed) "draw 1".
     }
 private:

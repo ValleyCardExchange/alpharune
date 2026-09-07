@@ -370,17 +370,29 @@ void ChainManager::stepResolve(
     state_.chain.resuming.reset();
 
     if (resolved.is_spell) {
-        // Spell goes to controller's trash after resolving (CR 359.3)
+        // Spell goes to controller's trash after resolving (CR 359.3) —
+        // UNLESS it was played for its Flow cost, in which case leaving the
+        // chain (and it wasn't instructed by its own execution) banishes it
+        // instead (CR 829.1.b.1).
         if (state_.objectExists(resolved.source)) {
             auto& spell_obj = state_.getObject(resolved.source);
-            spell_obj.zone = ZoneType::Trash;
             spell_obj.location = std::nullopt;
-            state_.player(resolved.controller).trash.push_back(resolved.source);
+            ZoneType destination = ZoneType::Trash;
+            if (resolved.banish_on_leave) {
+                destination = ZoneType::Banishment;
+                spell_obj.zone = ZoneType::Banishment;
+                spell_obj.is_empowered = false;  // CR 441.1.a
+                state_.player(resolved.controller).banishment.push_back(resolved.source);
+                events_.logTrace("FLOW: " + spell_obj.name + " banished");
+            } else {
+                spell_obj.zone = ZoneType::Trash;
+                state_.player(resolved.controller).trash.push_back(resolved.source);
+            }
 
             events_.emit(SpellResolvedEvent{resolved.source, resolved.controller});
             events_.emit(LeftBoardEvent{resolved.source, resolved.controller,
                 CardType::Spell, BaseLocation{resolved.controller},
-                ZoneType::Trash, false});
+                destination, false});
         }
     }
     // Triggered/activated abilities leave their source on the board — no
