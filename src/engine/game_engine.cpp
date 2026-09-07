@@ -1121,19 +1121,26 @@ void GameEngine::executeIntent(const Intent& intent) {
         case IntentType::PlayActionCard:
         // CR 806 / 813 / 819 — a [Reaction] play dispatched here.
         //
-        // Two generators emit PlayReaction. The CLOSED-STATE one
-        // (generateClosedStateActions) is answered by
-        // ChainManager::stepExecuteAndPass, which never calls executeIntent:
-        // spells there route back out to executePlaySpell via
-        // ChainManager::setPlaySpell, and non-spells take the chain's own
-        // local branch. The SHOWDOWN one (generateShowdownActions — the
-        // reaction-to-attack block that offers Rengar, Pouncing) is answered
-        // by resolveShowdownDecision, which dispatches through HERE. Without
-        // this case the switch fell to `default: break` and the showdown play
-        // was silently discarded — the card stayed in hand, nothing was paid,
-        // and focus passed as though it had been played. The two paths stay
-        // disjoint, so this cannot double-execute a closed-state play:
-        // executeIntent's only production callers are
+        // Two generators emit PlayReaction, answered in two different places
+        // that both end in the SAME two executors:
+        //
+        //   • CLOSED STATE (generateClosedStateActions) →
+        //     ChainManager::stepExecuteAndPass, which never calls
+        //     executeIntent. It picks by card type and calls back out:
+        //     spells through `play_spell_` (ChainManager::setPlaySpell →
+        //     executePlaySpell), units and gear through `play_card_`
+        //     (setPlayCard → executePlayCard). Its one local play is a
+        //     SPELLS-ONLY fallback for a bare ChainManager with no executor
+        //     injected — unit tests, never a real game.
+        //   • SHOWDOWN (generateShowdownActions — the reaction-to-attack
+        //     block that offers Rengar, Pouncing) → resolveShowdownDecision,
+        //     which dispatches through HERE.
+        //
+        // Without this case the switch fell to `default: break` and the
+        // showdown play was silently discarded — the card stayed in hand,
+        // nothing was paid, and focus passed as though it had been played.
+        // The two paths stay disjoint, so this cannot double-execute a
+        // closed-state play: executeIntent's only production callers are
         // resolveMainPhaseDecision and resolveShowdownDecision, and the
         // ChainManager reaches neither.
         //
@@ -2011,11 +2018,12 @@ void GameEngine::executePlaySpell(const Intent& intent) {
 }
 
 void GameEngine::runChain() {
-    // Re-entrancy guard. executePlaySpell ends here, and a Closed-State
-    // [Reaction] spell play is routed into executePlaySpell from INSIDE
-    // ChainManager::processFEPR. The item that play just added belongs to the
-    // loop already running — stepExecuteAndPass restarts it at Finalize the
-    // moment it sees the chain grew. Starting a second loop here would
+    // Re-entrancy guard. BOTH play executors end here — executePlaySpell and
+    // executePlayCard — and a Closed-State [Reaction] play is routed into one
+    // of them from INSIDE ChainManager::processFEPR (setPlaySpell for spells,
+    // setPlayCard for units and gear). The item that play just added belongs
+    // to the loop already running — stepExecuteAndPass restarts it at Finalize
+    // the moment it sees the chain grew. Starting a second loop here would
     // instead resolve the whole chain out from under the outer one.
     if (chain_manager_->isProcessing()) return;
 

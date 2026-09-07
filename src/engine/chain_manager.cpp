@@ -389,11 +389,18 @@ void ChainManager::stepResolve(
     // the shipped cards with that shape.
     //
     // House style for the `resuming` slot, used consistently from here to the
-    // disposal below: read members through `->` and pass the whole item as
-    // `*state_.chain.resuming`. Deliberately NO local reference is bound
-    // across a resolve_spell call — that call runs Card code which writes the
-    // slot (resume_point, resume_data), and a binding would invite someone to
-    // cache a stale copy.
+    // disposal below: read MEMBERS through `->`, but materialise the WHOLE
+    // item through the checked `.value()`. The distinction is not cosmetic —
+    // every member read sits immediately after the statement or guard that
+    // establishes the slot is populated, while the two whole-item reads
+    // (resolve_spell's argument, and the disposal) both follow arbitrary Card
+    // execution that could in principle have cleared it. `.value()`'s defined
+    // std::bad_optional_access is a better failure there than the undefined
+    // behaviour of `*`.
+    //
+    // Deliberately NO local reference is bound across a resolve_spell call —
+    // that call runs Card code which writes the slot (resume_point,
+    // resume_data), and a binding would invite someone to cache a stale copy.
     auto runResolutionPump = [&]() {
         constexpr int kMaxResumeIterations = 16;
         int iter = 0;
@@ -410,7 +417,7 @@ void ChainManager::stepResolve(
             // based on is_spell / is_ability — both paths are reachable here.
             if (state_.chain.resuming->is_spell ||
                 state_.chain.resuming->is_ability) {
-                resolve_spell(*state_.chain.resuming);
+                resolve_spell(state_.chain.resuming.value());
             }
 
             if (!executor_ || !executor_->hasPendingChoice()) break;
@@ -455,7 +462,7 @@ void ChainManager::stepResolve(
     }
 
     // Read the (possibly-mutated) resolving item back out and dispose.
-    resolved = std::move(*state_.chain.resuming);
+    resolved = std::move(state_.chain.resuming.value());
     state_.chain.resuming.reset();
 
     if (resolved.is_spell) {
