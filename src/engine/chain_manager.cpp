@@ -387,6 +387,13 @@ void ChainManager::stepResolve(
     // whatever card resolved next. Hard Bargain (457) — `[Reaction]` +
     // `[Repeat] [2]`, live in the Closed State — and Called Shot (443) are
     // the shipped cards with that shape.
+    //
+    // House style for the `resuming` slot, used consistently from here to the
+    // disposal below: read members through `->` and pass the whole item as
+    // `*state_.chain.resuming`. Deliberately NO local reference is bound
+    // across a resolve_spell call — that call runs Card code which writes the
+    // slot (resume_point, resume_data), and a binding would invite someone to
+    // cache a stale copy.
     auto runResolutionPump = [&]() {
         constexpr int kMaxResumeIterations = 16;
         int iter = 0;
@@ -403,7 +410,7 @@ void ChainManager::stepResolve(
             // based on is_spell / is_ability — both paths are reachable here.
             if (state_.chain.resuming->is_spell ||
                 state_.chain.resuming->is_ability) {
-                resolve_spell(state_.chain.resuming.value());
+                resolve_spell(*state_.chain.resuming);
             }
 
             if (!executor_ || !executor_->hasPendingChoice()) break;
@@ -448,7 +455,7 @@ void ChainManager::stepResolve(
     }
 
     // Read the (possibly-mutated) resolving item back out and dispose.
-    resolved = std::move(state_.chain.resuming.value());
+    resolved = std::move(*state_.chain.resuming);
     state_.chain.resuming.reset();
 
     if (resolved.is_spell) {

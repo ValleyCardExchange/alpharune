@@ -474,8 +474,13 @@ TEST_F(RepeatReactionsTest, ResumableRepeatTranchesRunThroughTheResumePump) {
         << "every tranche's published choice must reach the agent";
     EXPECT_EQ(g_resumable_done, 3)
         << "every tranche must consume its answer and finish its effect";
+    // Both halves of the leak: an unanswered REQUEST left published, and an
+    // answer recorded but never taken. Either one would be handed to whatever
+    // card resolves next.
     EXPECT_FALSE(exec.hasPendingChoice())
         << "a tranche must not leave a pending choice for the next card";
+    EXPECT_FALSE(exec.hasRecordedChoice())
+        << "and must not leave an unconsumed answer for the next card";
 }
 
 // ─── (3) Regression: non-resumable [Repeat] still repeats exactly N ────────
@@ -514,4 +519,5 @@ TEST_F(RepeatReactionsTest, NonResumableRepeatResolvesExactlyRepeatsPaidPlusOne)
 
     EXPECT_EQ(g_plain_resolves, 3) << "1 base + repeats_paid(2) extra runs";
     EXPECT_FALSE(exec.hasPendingChoice());
+    EXPECT_FALSE(exec.hasRecordedChoice());
 }

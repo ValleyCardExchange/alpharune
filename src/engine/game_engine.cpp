@@ -3881,22 +3881,29 @@ std::optional<PlayerId> GameEngine::resolveShowdownDecision(
         return opponent(current_focus);
     }
     // CR 806 + 813 + 819 + 822 — every action available during a
-    // showdown should be routed through executeIntent. Pre-2026-05-19
+    // showdown is routed through executeIntent. Pre-2026-05-19
     // engine-audit CRITICAL #3 fix: the switch only handled
-    // PlayActionCard. Ambush units (PlayActionCard with play_location)
-    // would route here correctly because they use PlayActionCard, BUT
-    // Pouncing units use PlayReaction, Quick-Draw gear uses
-    // PlayReaction, and activated abilities with [Action] timing use
-    // ActivateActionAbility. All three silently no-op'd until the
-    // 100-action safety cap fired.
+    // PlayActionCard, so the other intent types generateShowdownActions
+    // publishes silently no-op'd until the 100-action safety cap fired.
+    //
+    // What that generator actually emits, checked against it:
+    //   • Action / Reaction SPELLS and [Ambush] units → PlayActionCard
+    //     (generateSpellActions tags an offer PlayReaction only in the
+    //     Closed State; the showdown is Open);
+    //   • Rengar-style reaction-to-attack units → PlayReaction;
+    //   • [Action]-timing [E]: abilities → ActivateActionAbility.
+    // [Quick-Draw] gear is NOT a showdown offer at all — that block lives
+    // in generateClosedStateActions, whose offers are answered by
+    // ChainManager, never here.
     //
     // The same "play a thing, reset passes, focus to opponent" shape
     // applies to all of these. We dispatch via executeIntent (which
-    // already routes each type to the correct executor) and reset
-    // focus passes.
+    // routes each type to the correct executor) and reset focus passes.
+    // The remaining cases below are safety nets for hand-built intents
+    // (agents, the OpenSpiel bridge, replays), not generator output.
     switch (chosen.type) {
-        case IntentType::PlayActionCard:     // Action spells + Ambush units
-        case IntentType::PlayReaction:       // Pouncing units, Quick-Draw gear, Reaction spells in showdown
+        case IntentType::PlayActionCard:     // Action/Reaction spells + Ambush units
+        case IntentType::PlayReaction:       // reaction-to-attack units (Rengar, Pouncing)
         case IntentType::PlayCard:           // generic play (safety)
         case IntentType::ActivateActionAbility: // [Action] [E]: abilities
         case IntentType::ActivateReactionAbility: // [Reaction] [E]: abilities

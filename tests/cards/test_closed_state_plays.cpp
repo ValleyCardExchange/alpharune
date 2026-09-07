@@ -1,22 +1,32 @@
 /// @file test_closed_state_plays.cpp
-/// Closed-State (CR 309.1.a / 337) spell plays driven through the REAL
-/// chain — the whole-branch review's critical finding #1.
+/// Closed-State (CR 309.1.a / 337) plays driven through the REAL chain — the
+/// whole-branch review's critical finding #1 and its non-spell mirror.
 ///
 /// `GameEngine::generateClosedStateActions` offers `IntentType::PlayReaction`
-/// intents from three generators: hand spells, trash-replay grants and
-/// [Flow] plays. `GameEngine::executeIntent` has no PlayReaction case, so the
-/// ONLY executor those offers ever reach is
-/// `ChainManager::stepExecuteAndPass`. Before this fix that branch
-/// hand-rolled a play: it paid via the injected `payCardCost` (no Flow, no
-/// Sandswept Tomb staging), searched only `PlayerState::hand` for removal (so
-/// a trash/Flow play was never removed from the trash and came back as a
+/// for hand spells, trash-replay grants, [Flow] plays, [Quick-Draw] gear,
+/// [Ambush] and Rengar-style units, and facedown reveals of either kind.
+/// Every one of those offers is answered by `ChainManager::stepExecuteAndPass`
+/// and by nothing else: `GameEngine::executeIntent` does have a PlayReaction
+/// case, but it serves the SHOWDOWN decision path
+/// (`resolveShowdownDecision`), and ChainManager never calls executeIntent —
+/// the two paths are disjoint. See
+/// tests/cards/test_combat_showdown_dispatch.cpp for the showdown half.
+///
+/// stepExecuteAndPass used to hand-roll BOTH halves of the play, and both
+/// were wrong. The spell copy paid via the injected `payCardCost` (no Flow,
+/// no Sandswept Tomb staging), searched only `PlayerState::hand` for removal
+/// (so a trash/Flow play was never removed from the trash and came back as a
 /// DUPLICATE trash entry after resolving), never set `banish_on_leave`, never
 /// consumed a granted Flow, and never stamped
-/// `target_battlefield_restriction`.
+/// `target_battlefield_restriction`. The non-spell copy ended in `addSpell`,
+/// which sets `is_spell` — so a gear, an Ambush unit or a facedown PERMANENT
+/// was paid for and then disposed into the TRASH instead of reaching the
+/// board.
 ///
-/// The fix routes the SPELL half of that branch through
-/// `GameEngine::executePlaySpell` via an injected callback, so one executor
-/// owns every spell play. These tests drive the real FEPR loop:
+/// Both halves now route back out to the engine's real executors —
+/// `GameEngine::executePlaySpell` and `GameEngine::executePlayCard` — via
+/// injected callbacks, so one executor owns every play of each kind. These
+/// tests drive the real FEPR loop:
 ///
 ///   (a) a [Reaction][Flow] spell in the trash, played in the Closed State,
 ///       pays the FLOW cost, leaves the trash exactly once, and ends in
@@ -27,10 +37,12 @@
 ///       (792) offer pays the discounted power and narrows the pair picker;
 ///   (d) a plain hand [Reaction] play still behaves exactly as before
 ///       (regression);
-///   (e) a real facedown reveal through the chain emits
+///   (e) a real facedown SPELL reveal through the chain emits
 ///       `PlayedFromFacedownEvent` (Katarina 585's WhenYouPlayFromFacedown) —
 ///       review finding #4: before the fix the only emit site was the dead
-///       `GameEngine::executePlayFromHidden`, so the event never fired live.
+///       `GameEngine::executePlayFromHidden`, so the event never fired live;
+///   (f) the four PERMANENT reactions — Pouncing, Ambush, Quick-Draw and a
+///       facedown permanent reveal — land on the board rather than in trash.
 
 #include "tests/cards/card_test_fixture.h"
 

@@ -333,6 +333,15 @@ TEST_F(CombatShowdownDispatchTest, ResolveShowdown_QuickDrawGear_AttachesToItsTa
     // it, attach it to a unit you control." The auto-attach lives in
     // resolvePermanent and keys off the CHAIN ITEM's targets, so the gear
     // play path has to carry the intent's targets onto the item.
+    //
+    // NOTE: this is a HAND-BUILT intent. No generator emits a Quick-Draw
+    // PlayReaction into a showdown — that block lives in
+    // generateClosedStateActions, and those offers are answered by
+    // ChainManager, not here (see tests/cards/test_closed_state_plays.cpp for
+    // the closed-state Quick-Draw play). What this test pins is the GEAR arm
+    // of executeIntent's PlayReaction case, reachable from hand-built intents
+    // (agents, the OpenSpiel bridge, replays, testHook_executeIntent), which
+    // must not be a silent no-op.
     constexpr CardDefId kClothArmor = 387;   // 1E, Mind
 
     makeEngineAndSeedBattlefields();
