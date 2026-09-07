@@ -271,6 +271,10 @@ add_library(riftbound_core
     src/ml/feature_extractor.cpp
     src/ml/cfr_util.cpp
     src/openspiel/action_vocab.cpp
+    # Pure, engine-only agent helpers. These deliberately live in the core
+    # library (NOT in the riftbound executable alongside mcts_agent.cpp) so
+    # riftbound_tests can link and unit-test them; neither pulls in OpenSpiel.
+    src/agents/corpus_evaluator.cpp
 )
 
 target_include_directories(riftbound_core PUBLIC src)
