@@ -1,7 +1,9 @@
 # Kennen (Heart of the Tempest) deck support — design spec
 
-Date: 2026-09-07. Status: APPROVED in chat (design sections 1–7), awaiting
-spec read-through before the implementation plan.
+Date: 2026-09-07. Status: APPROVED in chat (design sections 1–7); AUDITED
+2026-09-07 per Tyler's audit-the-plan process — all nine findings folded on
+his ruling (see the dated addendum at the end; superseded text is marked
+inline with `[SUPERSEDED → addendum #N]` and left in place).
 
 ## Goal
 
@@ -99,20 +101,23 @@ which are not touched by this work). The Rengar list is fully covered.
   `disempowerObject(source)`; log as `ACTIVATE_COST: disempower`.
 
 **Rendering.** `state_renderer` prints ` [EMPOWERED]` after the legend
-name when set, and the HTML renderer shows a ⚡ marker on the legend card.
+name when set. `[SUPERSEDED → addendum #8]` ~~and the HTML renderer shows a
+⚡ marker on the legend card.~~ The HTML marker is conditional — see
+addendum #8.
 
 ## Section 2 — "Play from anywhere other than your hand"
 
 **Event.** `CardPlayedEvent::play_source` (`Intent::PlaySource`, default
-Hand). Set at every emit site in `game_engine.cpp` (four today) from the
-executing intent. `Intent::PlaySource` gains `Deck` for cards played from
-the top of the main deck (Nocturne's off-the-top play).
+Hand). `[SUPERSEDED → addendum #2]` ~~Set at every emit site in
+`game_engine.cpp` (four today) from the executing intent. `Intent::
+PlaySource` gains `Deck` for cards played from the top of the main deck
+(Nocturne's off-the-top play).~~ Set at every emit site from a shared
+zone-derivation helper — see addendum #2. No `Deck` value is added.
 
-**Free-play helper.** `EffectExecutor::playIgnoringCost` derives the source
-from the card's zone at call time (MainDeck → Deck, Trash → Trash,
-ChampionZone → ChampionZone, Banishment → Banishment, Hand → Hand,
-BattlefieldZone-hidden → Hidden) and the resulting `CardPlayedEvent`
-carries it. No caller changes.
+**Free-play helper.** `EffectExecutor::playIgnoringCost` uses the same
+zone-derivation helper (addendum #2) so the resulting `CardPlayedEvent`
+carries the true source. No caller changes. `[SUPERSEDED → addendum #2]`
+~~(MainDeck → Deck, …)~~ — the mapping is defined once in the addendum.
 
 **Trigger.** `TriggerType::WhenYouPlayFromNonHand`. In
 `TriggerManager::onCardPlayed`, when `e.play_source != Hand`, broadcast to
@@ -121,9 +126,12 @@ the player's on-board cards that fire on it (same loop shape as
 card is the chain item's triggering subject.
 
 Sources that count, all of which occur in Tyler's deck: Flow plays,
-Fizz's trash replay, The Harrowing, Last Rites, Nocturne off the top,
-hidden-card plays (Tideturner, Switcheroo), and the champion from the
-champion zone.
+Fizz's trash replay, The Harrowing, Last Rites, Nocturne (which banishes
+itself from the deck top and is played from banishment — verified in
+`0194_nocturne_horrifying.cpp`), hidden-card plays (Tideturner,
+Switcheroo), and the champion from the champion zone (addendum #3).
+Token plays do NOT count: tokens are not cards (CR 185, 350.2) and the
+engine's `createToken` emits no `CardPlayedEvent` (addendum #7).
 
 ## Section 3 — Flow (alternate-cost subsystem)
 
@@ -142,13 +150,14 @@ domain.
 = the turn number it was granted). "This turn" expiry is evaluated, not
 scheduled: the grant is live iff `valid_on_turn == state.turn.turn_number`.
 
-**Effective flow cost.** `GameEngine::effectiveFlowCost(obj)` → granted
-flow if live, else printed flow if the object has the keyword, else
-invalid. Both may exist; granted wins for the turn because it is the more
-recent, specific permission (CR 829.1.c.3 lets the controller choose when
-multiple instances exist; in scope only Kennen's grant ever coexists with a
-printed Flow, and its cost equals the printed base cost, so preferring the
-grant never removes an option the player would take).
+**Effective flow costs.** `[SUPERSEDED → addendum #1]` ~~`GameEngine::
+effectiveFlowCost(obj)` → granted flow if live, else printed flow if the
+object has the keyword, else invalid. Both may exist; granted wins for the
+turn because it is the more recent, specific permission (… preferring the
+grant never removes an option the player would take).~~
+`GameEngine::liveFlowCosts(obj)` returns BOTH costs when both are live —
+the printed one (keyword present) and the granted one (turn stamp matches)
+— and the controller chooses between them (CR 829.1.c.3). See addendum #1.
 
 **Offer.** `GameEngine::generateFlowPlayActions(player, action_ok,
 reaction_ok, actions)`, called next to `generateTrashReplayActions` at both
@@ -164,20 +173,25 @@ cost:
   `hasLegalTargets`, `enumerateLegalTargets`, optional targets).
 - Emit the same intent types as hand spells (`PlayCard` /
   `PlayActionCard` / `PlayReaction`) with `play_source = Trash` and a new
-  `Intent::use_flow_cost = true`.
+  `Intent::flow_source` (`None | Printed | Granted`) — one intent per live
+  flow cost (addendum #1).
 
 `generateTrashReplayActions` (Death from Below grants) is unchanged and
 must not double-offer: a trash spell with BOTH a replay grant and a flow
 cost yields two distinct intents (one per cost), which is CR-correct.
 
-**Execution.** In `executePlaySpell`, when `use_flow_cost`: the existing
-Trash-zone removal runs; payment is `payAdditionalCost` with the effective
-flow cost (choose the first payable domain when `any_domain`) instead of
-`payCardCost`; the `TrashReplayGrant` path is not consulted; log
-`FLOW: <name> played from trash for [E<n>][P<n>]`. The chain item created
-for the spell gets `ChainItem::banish_on_leave = true`. Additional-cost and
-optional-cost riders (Brazen-style) are skipped on a flow play exactly as
-they are on an alternate-cost play.
+**Execution.** In `executePlaySpell`, when `flow_source != None`: the
+existing Trash-zone removal runs; payment is `payAdditionalCost` with the
+selected flow cost (printed or granted per the intent; choose the first
+payable domain when `any_domain`) instead of `payCardCost`; the
+`TrashReplayGrant` path is not consulted; log `FLOW: <name> played from
+trash for [E<n>][P<n>] (<printed|granted>)`. The chain item created for
+the spell gets `ChainItem::banish_on_leave = true`. `[SUPERSEDED →
+addendum #6]` ~~Additional-cost and optional-cost riders (Brazen-style) are
+skipped on a flow play exactly as they are on an alternate-cost play.~~
+Flow replaces the BASE cost only (CR 829.1.c.1); additional costs would
+still apply, but no Flow spell in either deck has one, so the rider code
+path is left untouched and unexercised (addendum #6).
 
 **Banish (CR 829.1.b.1).** Two disposal sites branch on
 `banish_on_leave`:
@@ -230,9 +244,12 @@ apply:
   resolve, the spell resolves with no target exactly as a normal spell
   whose target vanished.
 
-Only spells in the two decks that choose friendly units are affected
-(Ride the Wind, Star-Crossed, Switcheroo, Flash, Rengar's Challenge-style
-picks); the mechanism is generic.
+`[SUPERSEDED → addendum #9]` ~~Only spells in the two decks that choose
+friendly units are affected (Ride the Wind, Star-Crossed, Switcheroo, Flash,
+Rengar's Challenge-style picks); the mechanism is generic.~~ The mechanism
+is generic; the exact list of affected spells in the two decks is fixed in
+addendum #9. Both players benefit from the Tomb — "friendly" is relative
+to the spell's controller, and the flag lives on the battlefield.
 
 ## Section 5 — Burn N
 
@@ -273,13 +290,14 @@ tags Yordle, Kennen).
 Flow; flow cost 2E + 1 power any-domain; tags Kennen).
 - `onResolve` (resumable): reveal the top up-to-3 cards to the controller
   only (`CardRevealedEvent`, private); offer a choice among them plus
-  "none"; the chosen card goes to hand AS A DRAW — via the executor's
-  existing look-at-top-N-and-choose helper, the one that increments
-  `draws_this_turn` and emits `CardsDrawnEvent` for the chosen cards
-  (`effect_executor.cpp` ~1095–1153) — so `WhenYouDrawACard` consumers see
-  it; the rest go to trash in their revealed order (this differs from
-  Stacked Deck, which recycles the rest to the bottom). Fewer than 3 cards
-  → operate on what exists.
+  "none"; the chosen card goes to hand AS A DRAW — via
+  `EffectExecutor::revealAndChoose` (`effect_executor.cpp:1065–1153`), the
+  helper that increments `draws_this_turn` and emits `CardsDrawnEvent` for
+  the chosen cards — so `WhenYouDrawACard` consumers see it.
+  `[SUPERSEDED → addendum #4]` ~~the rest go to trash in their revealed
+  order~~ → the helper today RECYCLES the non-chosen cards to the bottom;
+  Lightning Rush needs them in TRASH, so the helper gains a rest-destination
+  parameter (addendum #4). Fewer than 3 cards → operate on what exists.
 
 **791 — Up from the Deep** (Spell; Chaos; 3E; keywords Flow; flow cost 3E;
 no power).
@@ -323,8 +341,9 @@ Test files under `tests/cards/` using `CardTestFixture` unless noted.
 
 `test_flow.cpp`
 6. A printed-Flow spell in trash is offered exactly once as a flow intent
-   when the flow cost is affordable and not offered when only the printed
-   cost would be affordable.
+   when its FLOW cost is affordable; when the player can afford the
+   spell's printed (hand) cost but NOT its flow cost, no flow intent is
+   offered (reworded per addendum #9).
 7. A flow intent is not offered in the closed state for a spell without
    Reaction, and is offered for one with Reaction (timing parity with hand
    spells).
@@ -380,6 +399,59 @@ decks/kennen_tyler.txt --deck2 decks/rengar_test.txt --render-html on`
 reaches game over without an exception and its log contains at least one
 `FLOW:` and one `EMPOWER:` line across a small batch of seeds (a smoke
 check, not a test — the batch is reported, not asserted).
+
+## Addendum 2026-09-07 — audit-the-plan findings, folded on Tyler's ruling
+
+Audit run per `.claude/skills/audit-the-plan` (personal-ai). Tyler ruled
+"fold all nine as recommended". Each item below overrides the inline text
+it is linked from.
+
+1. **Both Flow costs are offered (CR 829.1.c.3).** Replaces "granted wins".
+   `GameEngine::liveFlowCosts(obj)` returns up to two costs: printed (the
+   object has `Keyword::Flow`) and granted (`granted_flow.valid_on_turn ==
+   turn.turn_number`). `Intent::flow_source` ∈ {None, Printed, Granted}
+   replaces the `use_flow_cost` bool everywhere it was mentioned; the
+   generator emits one intent per live cost that is affordable; execution
+   pays the cost named by the intent. New test: **#29** — a spell with a
+   live granted flow AND printed Flow yields two flow intents, one per
+   cost, and each pays its own cost.
+2. **Play source is derived from the card's zone, in one helper.** Replaces
+   "set from the executing intent" (the engine sets `play_source` only on
+   the Death-from-Below path; champion-zone and hidden plays never tag their
+   intent — verified by grep). `GameEngine::playSourceFor(obj)` maps the
+   object's zone at the moment of execution: Hand → Hand, Trash → Trash,
+   ChampionZone → ChampionZone, Banishment → Banishment, hidden-at-
+   battlefield → Hidden, Chain → ChainZone. All four `CardPlayedEvent` emit
+   sites and `EffectExecutor::playIgnoringCost` call it. No `Deck` value:
+   no in-scope card is played from the deck top (Nocturne banishes first).
+3. **Playing the champion from the champion zone empowers the legend.**
+   Tyler's ruling on the CR reading (champion zone ≠ hand; no errata entry
+   for any of the five cards). Test #5 stays and is the explicit witness.
+4. **`revealAndChoose` gains a rest-destination parameter** (`Recycle` —
+   today's behaviour and the default, so no caller changes — or `Trash`).
+   Lightning Rush passes `Trash`; the non-chosen cards go to trash in their
+   revealed order.
+5. **Sandswept Tomb keeps the restricted-intent mechanism.** Cost accepted:
+   +1 offered action per affected spell per Tomb with an eligible friendly
+   unit; no cheaper faithful design exists.
+6. **Flow replaces the base cost only.** Wording fixed in §3; the
+   additional-cost rider path is untouched and unexercised in scope.
+7. **Tokens are not cards.** New test **#28** — resolving Up from the Deep
+   (two Tentacle tokens) does not empower Heart of the Tempest.
+8. **HTML ⚡ marker is conditional.** `state_renderer` text marker is
+   required; the HTML marker is added only if `play_index_html.cpp`
+   already renders the legend card (checked in the plan, not assumed).
+9. **Wording.** Test #6 reworded (above). Affected spells for §4 in the two
+   decks, from the card texts in the registry: Tyler — Ride the Wind
+   (friendly unit), Star-Crossed (friendly + enemy), Switcheroo (friendly +
+   enemy), Flash (two friendly units); Rengar — Repulse (chooses a spell,
+   not a unit → unaffected), Challenge (enemy unit → unaffected), Thrill of
+   the Hunt (friendly unit → affected). Any spell whose target requirements
+   allow a friendly unit is eligible; the list is descriptive, the rule is
+   generic.
+
+Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
+costs offered and each pays its own).
 
 ## Section 9 — Where it lives
 
