@@ -63,6 +63,49 @@ void GameEngine::initSubsystems() {
         [this](const Intent& i) { executePlaySpell(i); });
     chain_manager_->setPlayCard(
         [this](const Intent& i) { executePlayCard(i); });
+    // …and closed-state ACTIVATIONS run through the same executeIntent
+    // activation path the main phase and showdowns use (see
+    // ChainManager::setActivateAbility for the burst this replaces).
+    //
+    // The bool this returns is the contract's "did the activation actually
+    // execute". executeIntent is void and can legitimately reject an
+    // activation (a token source with no CardDef; a [Disempower] cost on a
+    // source that is not Empowered, CR 828) — a rejection that pays nothing
+    // and must NOT restart FEPR. Success normally shows up as a chain item
+    // (every activated ability in the engine today goes through addAbility),
+    // but an ability that resolved immediately without one (CR 429.2 — the
+    // shape of every "[Add]" ability) is just as real, so the resources it
+    // produced and the costs it paid are compared as well. A rejection
+    // changes none of them.
+    chain_manager_->setActivateAbility([this](const Intent& intent) -> bool {
+        auto resourceFingerprint = [](const PlayerState& p) {
+            std::vector<int> f{p.rune_pool.energy, p.rune_pool.universal_power,
+                                p.xp, static_cast<int>(p.hand.size()),
+                                static_cast<int>(p.main_deck.size())};
+            for (int d = 0; d < static_cast<int>(Domain::Count); ++d)
+                f.push_back(p.rune_pool.power[d]);
+            return f;
+        };
+        const bool had_source = state_.objectExists(intent.ability_source);
+        const bool was_exhausted =
+            had_source && state_.getObject(intent.ability_source).is_exhausted;
+        const bool was_empowered =
+            had_source && state_.getObject(intent.ability_source).is_empowered;
+        const size_t chain_before = state_.chain.items.size();
+        const auto res_before = resourceFingerprint(state_.player(intent.player));
+
+        executeIntent(intent);
+
+        if (state_.chain.items.size() != chain_before) return true;
+        if (resourceFingerprint(state_.player(intent.player)) != res_before)
+            return true;
+        if (had_source && !state_.objectExists(intent.ability_source))
+            return true;  // e.g. Gold (326): "Kill this" is part of the cost
+        if (!had_source) return false;
+        const auto& src = state_.getObject(intent.ability_source);
+        return src.is_exhausted != was_exhausted ||
+               src.is_empowered != was_empowered;
+    });
     effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
     effect_executor_->setRng(&rng_);
     effect_executor_->setAgentQuery(
@@ -1198,7 +1241,32 @@ void GameEngine::executeIntent(const Intent& intent) {
             break;
         }
         case IntentType::ActivateAbility:
-        case IntentType::ActivateActionAbility: {
+        case IntentType::ActivateActionAbility:
+        // CR 376 / 398-406 / 429 — a [Reaction]-timing activation dispatched
+        // here. Two generators emit ActivateReactionAbility and BOTH of the
+        // paths that answer them end up in this case:
+        //
+        //   • CLOSED STATE (generateClosedStateActions' reaction-ability
+        //     block) → ChainManager::stepExecuteAndPass → the injected
+        //     `activate_ability_` executor (ChainManager::setActivateAbility,
+        //     wired in initSubsystems), which calls straight into here;
+        //   • SHOWDOWN (resolveShowdownDecision), which already listed
+        //     ActivateReactionAbility in its own dispatch switch and forwarded
+        //     it to executeIntent.
+        //
+        // Without this label the switch fell to `default: break` and BOTH
+        // silently discarded the activation: nothing exhausted, no cost paid,
+        // no Card::onActivate, no chain item. In the Closed State that also
+        // left the intent legal, so the agent re-picked it every query until
+        // the priority-pass cap — the 10-93-decision frozen-state bursts in
+        // the branch's decision logs, and the reason Kennen's Seal-of-Discord
+        // power engine did nothing at all in the Closed State.
+        //
+        // Cost payment and dispatch are identical for all three timings — the
+        // TIMING lives in the generators (which offer a [Reaction] ability
+        // only where CR allows) and in the priority bookkeeping around the
+        // call, never in the payment itself — so they share one body.
+        case IntentType::ActivateReactionAbility: {
             auto& source = state_.getObject(intent.ability_source);
             // Skip card-def lookup for tokens (no CardDef). The rest of this
             // handler reads from `source` directly; the previous `def` binding

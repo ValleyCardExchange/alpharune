@@ -119,6 +119,38 @@ public:
     using PlayCard = std::function<void(const Intent&)>;
     void setPlayCard(PlayCard play) { play_card_ = std::move(play); }
 
+    /// Set the ACTIVATED-ABILITY executor (injected from GameEngine — the
+    /// ActivateAbility / ActivateActionAbility case of
+    /// GameEngine::executeIntent). Third sibling of setPlaySpell /
+    /// setPlayCard, and there for the same reason.
+    ///
+    /// `generateClosedStateActions` offers `ActivateReactionAbility` for every
+    /// `[Reaction]` activated ability its controller can pay for — Seal of
+    /// Discord (204)'s "[E]: [Reaction] — [Add] [P]" is the one the Kennen
+    /// deck runs three copies of. stepExecuteAndPass is the ONLY answerer of a
+    /// closed-state offer, and it used to handle PassPriority and PlayReaction
+    /// and nothing else. A chosen activation therefore paid no cost, ran no
+    /// Card::onActivate, added no chain item and — the source never having
+    /// been exhausted — stayed legal, so the agent chose it again, and again,
+    /// for the whole kMaxPriorityPasses window with completely frozen state.
+    /// Real decision logs on this branch show 10-93-decision bursts of exactly
+    /// that; Kennen's power engine was a silent no-op in the Closed State.
+    ///
+    /// Routing back out to executeIntent instead of hand-rolling a second
+    /// activation path here is what makes the exhaust / [Disempower] / energy
+    /// / recycle / discard / XP costs get paid and Card::onActivate get
+    /// dispatched — by the same code the main-phase and showdown paths use.
+    ///
+    /// CONTRACT: return true iff the activation actually EXECUTED. That is a
+    /// different question from "did the chain grow" (see stepExecuteAndPass on
+    /// the immediate-resolution case, CR 429.2), so the engine — which can see
+    /// what its own executor did — answers it rather than this class guessing
+    /// from the chain.
+    using ActivateAbility = std::function<bool(const Intent&)>;
+    void setActivateAbility(ActivateAbility act) {
+        activate_ability_ = std::move(act);
+    }
+
     /// True while processFEPR is running.
     ///
     /// GameEngine::executePlaySpell ends by calling GameEngine::runChain, and
@@ -145,6 +177,7 @@ private:
     PayCost pay_cost_;
     PlaySpell play_spell_;
     PlayCard play_card_;
+    ActivateAbility activate_ability_;
     EffectExecutor* executor_ = nullptr;
     bool processing_ = false;
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <string>
 
 namespace riftbound {
 
@@ -348,8 +349,90 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             addSpell(chosen.card, current, chosen.targets);
 
             return true; // Item added → restart FEPR from Finalize
+        } else if (chosen.type == IntentType::ActivateReactionAbility ||
+                   chosen.type == IntentType::ActivateAbility ||
+                   chosen.type == IntentType::ActivateActionAbility) {
+            // ── ONE executor owns every activation too ──
+            //
+            // CR 376 / 398-406. generateClosedStateActions offers
+            // ActivateReactionAbility for every `[Reaction]` activated ability
+            // its controller can pay for — Seal of Discord (204)'s
+            // "[E]: [Reaction] — [Add] [P]", three copies of which ride in
+            // decks/kennen_tyler.txt. ActivateAbility / ActivateActionAbility
+            // are handled alongside it because nothing stops a hand-built
+            // intent (agent, OpenSpiel bridge, replay) from arriving here with
+            // one, and silently dropping it is the whole bug below.
+            //
+            // This used to be a comment saying activations were "Phase 3+" and
+            // a fallthrough. The intent was dropped: no cost paid, no
+            // onActivate, no chain item — and because the source was never
+            // exhausted the SAME activation was still legal on the next query,
+            // so the agent chose it again for the whole kMaxPriorityPasses
+            // window. Decision logs show 10-93-long bursts of one frozen
+            // intent. See ChainManager::setActivateAbility.
+            const std::string src_name =
+                state_.objectExists(chosen.ability_source)
+                    ? state_.getObject(chosen.ability_source).name
+                    : std::string("(unknown source)");
+
+            if (activate_ability_) {
+                const size_t before = state_.chain.items.size();
+                // The engine reports whether its activation path actually ran
+                // — the chain alone can't answer that (see below).
+                if (activate_ability_(chosen)) {
+                    // Two shapes, and BOTH must reset the priority/pass
+                    // bookkeeping the way a play does:
+                    //
+                    //   • the activation went ON the chain — every activated
+                    //     ability in the engine today does, via
+                    //     GameEngine::executeIntent → addAbility → runChain,
+                    //     which returns immediately while this loop is live.
+                    //     The new item must be finalized before anyone gets
+                    //     priority again (CR 337.1.b.3).
+                    //   • it resolved IMMEDIATELY with no chain item — the
+                    //     shape CR 429.2 gives an "[Add]" ability, which can't
+                    //     be reacted to. Nothing to finalize, but a player
+                    //     still ACTED, so every pass accumulated before it is
+                    //     stale and must be cleared.
+                    //
+                    // Returning true serves both: processFEPR restarts at
+                    // Finalize, which no-ops on an unchanged chain, and
+                    // re-enters this function — which clears
+                    // players_passed_priority and hands priority back to the
+                    // newest item's controller. What it must NOT do is fall
+                    // into the "executed nothing" warning below, which is why
+                    // the executor answers with a bool instead of this code
+                    // inferring success from the chain size.
+                    if (state_.chain.items.size() == before) {
+                        events_.logTrace(
+                            "CHAIN: closed-state activation of " + src_name +
+                            " resolved immediately (CR 429.2, no chain item) "
+                            "— restarting FEPR so priority resets");
+                    }
+                    return true;
+                }
+                events_.logWarn("CHAIN: closed-state activation of " +
+                                src_name + " executed nothing — intent "
+                                "rejected");
+                continue;
+            }
+
+            // ── No executor injected: the bare-ChainManager case ──
+            //
+            // Only reachable from a unit test driving processFEPR with no
+            // GameEngine behind it. Rejected LOUDLY rather than hand-rolled,
+            // exactly like the permanent play above: paying an ActivationCost
+            // means exhaust, [Disempower] (CR 828, legality re-check
+            // included), energy off ready runes, recycle-self, discard and XP,
+            // plus the per-ability cost lookup and the aura-granted-ability
+            // indirection — all of which already live in
+            // GameEngine::executeIntent.
+            events_.logWarn("CHAIN: no activation executor injected — "
+                            "closed-state activation of " + src_name +
+                            " rejected (wire "
+                            "ChainManager::setActivateAbility)");
+            continue;
         }
-        // Other intent types (ActivateReactionAbility etc.) are Phase 3+
     }
 
     return false;
