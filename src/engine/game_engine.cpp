@@ -1114,7 +1114,32 @@ void GameEngine::executeIntent(const Intent& intent) {
 
     switch (intent.type) {
         case IntentType::PlayCard:
-        case IntentType::PlayActionCard: {
+        case IntentType::PlayActionCard:
+        // CR 806 / 813 / 819 — a [Reaction] play dispatched here.
+        //
+        // Two generators emit PlayReaction. The CLOSED-STATE one
+        // (generateClosedStateActions) is answered by
+        // ChainManager::stepExecuteAndPass, which never calls executeIntent:
+        // spells there route back out to executePlaySpell via
+        // ChainManager::setPlaySpell, and non-spells take the chain's own
+        // local branch. The SHOWDOWN one (generateShowdownActions — the
+        // reaction-to-attack block that offers Rengar, Pouncing) is answered
+        // by resolveShowdownDecision, which dispatches through HERE. Without
+        // this case the switch fell to `default: break` and the showdown play
+        // was silently discarded — the card stayed in hand, nothing was paid,
+        // and focus passed as though it had been played. The two paths stay
+        // disjoint, so this cannot double-execute a closed-state play:
+        // executeIntent's only production callers are
+        // resolveMainPhaseDecision and resolveShowdownDecision, and the
+        // ChainManager reaches neither.
+        //
+        // Routing is by card type, into the SAME executors every other play
+        // uses: spells to executePlaySpell (chain, [Flow], Sandswept Tomb,
+        // facedown reveal); units and gear to executePlayCard, which honours
+        // intent.play_location so a Pouncing / Ambush unit lands at its
+        // battlefield, and carries intent.targets onto the chain item, which
+        // is what makes Quick-Draw's auto-attach in resolvePermanent fire.
+        case IntentType::PlayReaction: {
             auto& card = state_.getObject(intent.card);
             if (card.isSpell()) {
                 executePlaySpell(intent);
@@ -1413,8 +1438,12 @@ void GameEngine::executePlayCard(const Intent& intent) {
         }
     }
 
-    // Route through chain — permanent resolves immediately at Finalize (CR 337.1.c)
-    chain_manager_->addPermanent(intent.card, intent.player);
+    // Route through chain — permanent resolves immediately at Finalize
+    // (CR 337.1.c). The play's targets ride along on the item because
+    // resolvePermanent reads them: [Quick-Draw] gear attaches to the unit
+    // the play named as it enters (CR 819). Every other permanent play
+    // carries no targets, so nothing else sees a change.
+    chain_manager_->addPermanent(intent.card, intent.player, intent.targets);
     runChain();
 }
 

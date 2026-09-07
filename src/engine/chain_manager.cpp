@@ -42,7 +42,8 @@ ChainItemId ChainManager::addSpell(GameObjectId spell_obj, PlayerId controller,
 }
 
 ChainItemId ChainManager::addPermanent(GameObjectId card_obj,
-                                         PlayerId controller) {
+                                         PlayerId controller,
+                                         const std::vector<GameObjectId>& targets) {
     auto& chain = state_.chain;
     bool was_empty = !chain.exists();
 
@@ -52,6 +53,7 @@ ChainItemId ChainManager::addPermanent(GameObjectId card_obj,
     item.source = card_obj;
     item.card_def_id = state_.getObject(card_obj).card_def_id;
     item.controller = controller;
+    item.targets = targets;
     item.is_permanent = true;
 
     chain.items.push_back(item);

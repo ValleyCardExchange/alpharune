@@ -35,7 +35,13 @@ public:
 
     /// Add a permanent (unit/gear) to the chain as a Pending Item.
     /// Permanents resolve immediately on finalize (CR 337.1.c).
-    ChainItemId addPermanent(GameObjectId card_obj, PlayerId controller);
+    ///
+    /// `targets` are the objects the PLAY chose, carried onto the item so
+    /// GameEngine::resolvePermanent can read them back: a [Quick-Draw] gear
+    /// names the unit it attaches to as it enters (CR 819). Every other
+    /// permanent play leaves it empty, which is the default.
+    ChainItemId addPermanent(GameObjectId card_obj, PlayerId controller,
+                             const std::vector<GameObjectId>& targets = {});
 
     /// Add a triggered/activated ability to the chain. Source stays on
     /// board (not moved to chain zone). `is_activated` distinguishes
