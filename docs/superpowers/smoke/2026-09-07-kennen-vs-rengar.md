@@ -42,22 +42,37 @@ saved to` lines).
 
 | # | Seed | Seats (P1/P2) | Winner (by deck) | Reason | Turns | FLOW trash | FLOW banished | EMPOWER | DISEMPOWER | ACTIVATE_COST disempower | BURN | KENNEN gains Flow | Sandswept/TOMB/restricted anomaly lines |
 |---|------|----------------|-------------------|--------|-------|-----------|---------------|---------|------------|--------------------------|------|--------------------|------------------------------------------|
-| 1 | 1  | Kennen/Rengar | Kennen | P1 reached 8 points | 15 | 1 | 1 | 8  | 4 | 4 | 2 | 1 | 0 |
-| 2 | 2  | Kennen/Rengar | Kennen | P1 reached 8 points | 10 | 0 | 0 | 4  | 2 | 2 | 2 | 0 | 0 |
-| 3 | 3  | Kennen/Rengar | Rengar | P2 reached 8 points | 12 | 1 | 1 | 6  | 3 | 3 | 2 | 0 | 0 |
-| 4 | 4  | Kennen/Rengar | Kennen | P1 reached 8 points | 17 | 0 | 0 | 4  | 2 | 2 | 4 | 1 | 0 |
-| 5 | 5  | Kennen/Rengar | Kennen | P1 reached 8 points | 12 | 1 | 1 | 4  | 2 | 2 | 4 | 0 | 0 |
-| 6 | 11 | Rengar/Kennen | Rengar | P1 reached 8 points | 11 | 0 | 0 | 4  | 2 | 2 | 2 | 0 | 0 |
-| 7 | 12 | Rengar/Kennen | Rengar | P1 reached 8 points | 15 | 0 | 0 | 4  | 2 | 2 | 2 | 1 | 0 |
-| 8 | 13 | Rengar/Kennen | Kennen | P2 reached 8 points | 10 | 0 | 0 | 6  | 3 | 3 | 4 | 1 | 0 |
-| 9 | 14 | Rengar/Kennen | Rengar | P1 reached 8 points | 14 | 2 | 2 | 6  | 3 | 3 | 4 | 0 | 0 |
-| 10 | 15 | Rengar/Kennen | Kennen | P2 reached 8 points | 16 | 1 | 1 | 10 | 5 | 5 | 6 | 1 | 0 |
+| 1 | 1  | Kennen/Rengar | Kennen | P1 reached 8 points | 15 | 1 | 1 | 4  | 4 | 4 | 2 | 1 | 0 |
+| 2 | 2  | Kennen/Rengar | Kennen | P1 reached 8 points | 10 | 0 | 0 | 2  | 2 | 2 | 2 | 0 | 0 |
+| 3 | 3  | Kennen/Rengar | Rengar | P2 reached 8 points | 12 | 1 | 1 | 3  | 3 | 3 | 2 | 0 | 0 |
+| 4 | 4  | Kennen/Rengar | Kennen | P1 reached 8 points | 17 | 0 | 0 | 2  | 2 | 2 | 4 | 1 | 0 |
+| 5 | 5  | Kennen/Rengar | Kennen | P1 reached 8 points | 12 | 1 | 1 | 2  | 2 | 2 | 4 | 0 | 0 |
+| 6 | 11 | Rengar/Kennen | Rengar | P1 reached 8 points | 11 | 0 | 0 | 2  | 2 | 2 | 2 | 0 | 0 |
+| 7 | 12 | Rengar/Kennen | Rengar | P1 reached 8 points | 15 | 0 | 0 | 2  | 2 | 2 | 2 | 1 | 0 |
+| 8 | 13 | Rengar/Kennen | Kennen | P2 reached 8 points | 10 | 0 | 0 | 3  | 3 | 3 | 4 | 1 | 0 |
+| 9 | 14 | Rengar/Kennen | Rengar | P1 reached 8 points | 14 | 2 | 2 | 3  | 3 | 3 | 4 | 0 | 0 |
+| 10 | 15 | Rengar/Kennen | Kennen | P2 reached 8 points | 16 | 1 | 1 | 5  | 5 | 5 | 6 | 1 | 0 |
 | 11* | 7 (30 sims, controller pre-check) | Kennen/Rengar | Kennen | P1 reached 8 points | 12 | 2 | 2 | 4  | 4 | 4 | 2 | 1 | 0 |
 
 \* Row 11 is the controller's pre-check game (mcts:sims=30 both seats,
 same binary at `b33a1ad`), reproduced from
 `.superpowers/sdd/2026-09-07-kennen-tyler-deck/smoke-precheck-seed7.md`
 for reference; it is not part of the 10-game sims=50 batch totals below.
+
+**Correction (fix round 1):** the `EMPOWER:` column above was originally
+reported as exactly 2× `DISEMPOWER:` in every row because the counting
+grep matched `EMPOWER:` as a substring, which also matches inside
+`DISEMPOWER:`; recounted per replay with a non-substring pattern
+(`grep -o '[^S]EMPOWER:'`, since every real `EMPOWER:` trace line has a
+non-`S` character immediately before it, while `DISEMPOWER:`'s embedded
+`EMPOWER:` is always preceded by `S`) and confirmed real EMPOWER
+transitions equal DISEMPOWER transitions exactly in every game, as
+expected mechanically (an empower and its matching disempower are
+paired). The other marker columns were checked for the same class of
+overlap and are unaffected: `FLOW:` has no other trace tag ending in
+that substring, and `BURN:` (colon-anchored) does not collide with the
+unrelated `BURN_OUT` token (no colon follows it), so both counts stand
+as originally reported.
 
 Games 4 and 14 each played and used the Sandswept Tomb battlefield card
 (id 792); its board-state text ("Sandswept Tomb  [Ctrl:--] ...") then
@@ -75,7 +90,7 @@ anomaly lines" column above reports.
 - Winner by deck: **Kennen 6 — Rengar 4**
 - `FLOW: ... played from trash`: 6
 - `FLOW: ... banished`: 6
-- `EMPOWER:`: 56
+- `EMPOWER:`: 28 (corrected — see fix note above)
 - `DISEMPOWER:`: 28
 - `ACTIVATE_COST: disempower`: 28
 - `BURN:`: 32
