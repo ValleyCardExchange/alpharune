@@ -1,0 +1,34 @@
+Legend:
+1 Kennen, Heart of the Tempest
+
+Champion:
+1 Kennen, Storm of Shuriken
+
+MainDeck:
+1 Baron Nashor
+2 Fizz, Trickster
+1 Flash
+1 Hard Bargain
+2 Last Rites
+3 Lightning Rush
+3 Nocturne, Horrifying
+3 Rhasa the Sunderer
+3 Ride the Wind
+3 Seal of Discord
+3 Stacked Deck
+2 Star-Crossed
+2 Switcheroo
+1 The Harrowing
+1 Tideturner
+3 Traveling Merchant
+3 Treasure Hunter
+2 Up from the Deep
+
+Battlefields:
+1 Zaun Warrens
+1 Minefield
+1 Sandswept Tomb
+
+Runes:
+9 Chaos Rune
+3 Order Rune
