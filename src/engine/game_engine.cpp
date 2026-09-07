@@ -1434,13 +1434,50 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         if (it != ps.trash.end()) ps.trash.erase(it);
     }
 
+    // Flow (CR 829) — an ALTERNATE cost that REPLACES the base cost
+    // (CR 829.1.c.1), exactly like use_alt_play_cost: the trash-replay grant,
+    // payCardCost and the optional-cost riders are all skipped. The offer is
+    // RECOMPUTED here from the object rather than trusted off the intent, so
+    // a cost that expired or changed between offer and execution can't be
+    // paid at a stale price.
+    bool paid_via_flow = false;
+    int flow_energy_paid = 0;
+    if (intent.flow_source != Intent::FlowSource::None) {
+        for (const auto& offer : liveFlowCosts(intent.card)) {
+            if (offer.source != intent.flow_source) continue;
+            Domain d = offer.cost.power_domain;
+            if (offer.cost.any_domain) {
+                for (int di = 0; di < static_cast<int>(Domain::Count); ++di)
+                    if (canPayAdditionalCost(intent.player, offer.cost.energy,
+                                              offer.cost.power,
+                                              static_cast<Domain>(di))) {
+                        d = static_cast<Domain>(di);
+                        break;
+                    }
+            }
+            payAdditionalCost(intent.player, offer.cost.energy,
+                               offer.cost.power, d);
+            flow_energy_paid = offer.cost.energy;
+            paid_via_flow = true;
+            events_.logTrace("FLOW: " + card.name +
+                " played from trash for [E" + std::to_string(offer.cost.energy) +
+                "][P" + std::to_string(offer.cost.power) + "] (" +
+                (intent.flow_source == Intent::FlowSource::Granted
+                    ? "granted" : "printed") + ")");
+            break;
+        }
+        // A granted Flow is consumed by the play — the object has left the
+        // trash, so a later return there must not resurrect the grant.
+        card.granted_flow.reset();
+    }
+
     // Pay cost. A trash-replay grant overrides the printed cost (and its own
     // additional costs); otherwise the normal play_source-aware path runs.
     bool paid_via_grant = false;
-    if (intent.play_source == Intent::PlaySource::Trash) {
+    if (!paid_via_flow && intent.play_source == Intent::PlaySource::Trash) {
         paid_via_grant = payTrashReplayGrant(intent.player, intent.card);
     }
-    if (!paid_via_grant) {
+    if (!paid_via_flow && !paid_via_grant) {
         ps.current_play_source = intent.play_source;
         // Irelia, Graceful (462): "your spells that choose me cost [1]/[A] less."
         // Stage the largest per-target reduction among this spell's chosen
@@ -1535,7 +1572,13 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // Track play count
     ps.cards_played_this_turn++;
     int energy_spent = 0;
-    if (card.card_def_id != kInvalidId) {
+    if (paid_via_flow) {
+        // Flow REPLACED the base cost — report what was actually spent, so
+        // CardPlayedEvent / max_spell_spent_this_turn (Jhin) and the chain
+        // item's total_energy_spent (Forgotten Library, Virtuoso) all read
+        // the flow energy, not the printed cost that was never paid.
+        energy_spent = flow_energy_paid;
+    } else if (card.card_def_id != kInvalidId) {
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
     int total_energy_spent = energy_spent + repeats * repeat_cost.energy;
@@ -1561,7 +1604,16 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // onto the chain item — ChainManager re-resolves the spell `repeats_paid`
     // extra times in its post-resume loop.
     auto chain_id = chain_manager_->addSpell(intent.card, intent.player, intent.targets);
-    (void)chain_id;
+    if (paid_via_flow) {
+        // CR 829.1.b.1 — a spell played for its Flow cost is BANISHED as it
+        // leaves the chain, not trashed. Flag the item here; the disposal
+        // sites (ChainManager::stepResolve, the counter/revert path) read it.
+        for (auto& it : state_.chain.items) {
+            if (it.id != chain_id) continue;
+            it.banish_on_leave = true;
+            break;
+        }
+    }
     if (!state_.chain.items.empty()) {
         state_.chain.items.back().total_energy_spent = total_energy_spent;
         state_.chain.items.back().repeats_paid = repeats;
@@ -2300,6 +2352,8 @@ std::vector<Intent> GameEngine::generateMainPhaseActions(PlayerId player) const 
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Activate abilities on gear/legends/units ([E]: abilities)
@@ -2418,6 +2472,8 @@ std::vector<Intent> GameEngine::generateShowdownActions(PlayerId player) const {
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Ambush: play units with [Ambush] during showdowns
@@ -2540,6 +2596,8 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/false, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/false, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Quick-Draw: play gear with [Quick-Draw] as Reactions targeting a friendly unit
@@ -2890,14 +2948,141 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
 }
 
 // ── Flow (CR 829) ──
-// Scaffolding only: behaviour lands test-first in a later task.
-std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId /*obj*/) const {
-    return {};
+//
+// Flow is an ALTERNATE cost: "you may play me from your trash for <cost>",
+// replacing the base cost (CR 829.1.c.1) but changing nothing about timing
+// (CR 829.1.b.2). Two permissions can be live on the same object at once —
+// the card's own printed [Flow] and a grant (Kennen) — and the controller
+// chooses between them (CR 829.1.c.3), so this returns BOTH and the action
+// generator emits one intent per affordable offer.
+std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId obj) const {
+    std::vector<FlowOffer> offers;
+    if (obj == kInvalidId || !state_.objectExists(obj)) return offers;
+    const auto& o = state_.getObject(obj);
+
+    // Printed [Flow] — the object carries the keyword; the cost comes off the
+    // Card (the default impl reads the def, and is valid only with the keyword).
+    if (o.keywords.has(Keyword::Flow) && o.card_def_id != kInvalidId) {
+        if (const Card* c = card_registry_.get(o.card_def_id)) {
+            Card::FlowCost fc = c->flowCost();
+            if (fc.valid) offers.push_back(FlowOffer{Intent::FlowSource::Printed, fc});
+        }
+    }
+
+    // Granted [Flow] — "until end of turn" expiry is EVALUATED, not
+    // scheduled: the grant is live iff its turn stamp is the current turn.
+    if (o.granted_flow.has_value() &&
+        o.granted_flow->valid_on_turn == state_.turn.turn_number) {
+        Card::FlowCost fc;
+        fc.valid        = true;
+        fc.energy       = o.granted_flow->energy;
+        fc.power        = o.granted_flow->power;
+        fc.power_domain = o.granted_flow->power_domain;
+        fc.any_domain   = o.granted_flow->any_domain;
+        offers.push_back(FlowOffer{Intent::FlowSource::Granted, fc});
+    }
+
+    return offers;
 }
 
-void GameEngine::generateFlowPlayActions(PlayerId /*player*/, bool /*action_ok*/,
-                                          bool /*reaction_ok*/,
-                                          std::vector<Intent>& /*actions*/) const {
+void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
+                                          bool reaction_ok,
+                                          std::vector<Intent>& actions) const {
+    auto& ps = state_.player(player);
+    if (ps.trash.empty()) return;
+    if (ps.cant_play_cards_this_turn || ps.cant_play_spells_this_turn) return;
+
+    for (auto card_id : ps.trash) {
+        if (card_id == kInvalidId) continue;
+        if (!state_.objectExists(card_id)) continue;
+        auto& card = state_.getObject(card_id);
+        if (card.zone != ZoneType::Trash) continue;
+        if (!card.isSpell()) continue;
+
+        auto offers = liveFlowCosts(card_id);
+        if (offers.empty()) continue;
+
+        // Timing gate — identical to generateSpellActions (CR 309/806/813).
+        // Flow changes what the play costs, never when it may happen.
+        bool has_action = card.keywords.has(Keyword::Action);
+        bool has_reaction = card.keywords.has(Keyword::Reaction);
+        if (has_reaction) has_action = true;
+        bool allowed = false;
+        if (state_.turn.isNeutralOpen()) {
+            allowed = true;
+        } else if (state_.turn.isShowdownOpen()) {
+            allowed = has_action || has_reaction;
+        } else if (state_.turn.isClosedState()) {
+            allowed = has_reaction && reaction_ok;
+        } else {
+            if (action_ok && has_action) allowed = true;
+            if (reaction_ok && has_reaction) allowed = true;
+        }
+        if (!allowed) continue;
+
+        Card* spell_card = card_registry_.get(card.card_def_id);
+        if (spell_card && !spell_card->hasLegalTargets(state_, player)) continue;
+        auto legal_targets = spell_card
+            ? spell_card->enumerateLegalTargets(state_, player)
+            : std::vector<GameObjectId>{};
+        auto req = spell_card ? spell_card->getTargetRequirements()
+                              : TargetRequirements{};
+
+        IntentType intent_type = IntentType::PlayCard;
+        if (state_.turn.isShowdownOpen()) intent_type = IntentType::PlayActionCard;
+        else if (state_.turn.isClosedState()) intent_type = IntentType::PlayReaction;
+
+        // One intent per live flow cost the player can actually pay (spec
+        // addendum #1) — affordability is checked against the FLOW cost,
+        // never the printed one.
+        for (const auto& offer : offers) {
+            bool affordable = false;
+            if (offer.cost.any_domain) {
+                for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
+                    if (canPayAdditionalCost(player, offer.cost.energy,
+                                              offer.cost.power,
+                                              static_cast<Domain>(di))) {
+                        affordable = true;
+                        break;
+                    }
+                }
+            } else {
+                affordable = canPayAdditionalCost(player, offer.cost.energy,
+                                                   offer.cost.power,
+                                                   offer.cost.power_domain);
+            }
+            if (!affordable) continue;
+
+            auto make = [&](std::vector<GameObjectId> tgts) {
+                Intent play;
+                play.type = intent_type;
+                play.player = player;
+                play.card = card_id;
+                play.play_source = Intent::PlaySource::Trash;
+                play.flow_source = offer.source;
+                play.targets = std::move(tgts);
+                actions.push_back(play);
+            };
+
+            if (spell_card && req.count > 0 &&
+                (spell_card->needsPlayTimeTarget() ||
+                 spell_card->needsPlayTimeTargetPair())) {
+                make({});                              // agent picks at resolve
+            } else if (req.count == 0 || (req.optional && legal_targets.empty())) {
+                make({});
+            } else if (req.count == 2) {
+                std::vector<GameObjectId> friendly, enemy;
+                for (auto tid : legal_targets) {
+                    if (state_.getObject(tid).controller == player) friendly.push_back(tid);
+                    else enemy.push_back(tid);
+                }
+                for (auto ft : friendly)
+                    for (auto et : enemy) make({ft, et});
+            } else {
+                for (auto target : legal_targets) make({target});
+            }
+        }
+    }
 }
 
 Intent::PlaySource GameEngine::playSourceFor(const GameObject& obj) const {
