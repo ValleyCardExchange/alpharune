@@ -472,6 +472,21 @@ it is linked from.
     per card, never a public reveal. Addendum #4's helper parameter stays
     (implemented and tested in Task 7) but has no in-scope caller.
 
+12. **(added during Tasks 4 and 9 review, 2026-09-07) Known limitation —
+    OpenSpiel action-id aliasing.** The engine offers distinct intents for a
+    printed vs a granted Flow cost (addendum #1) and for a restricted vs a
+    plain Tomb offer (§4), but `src/openspiel/action_vocab.cpp` keys the
+    whole Play family on the card slot alone, so an OpenSpiel/MCTS agent
+    sees one action id and `decodeAction` returns the FIRST matching legal
+    intent. Engine-internal agents that pick from the `Intent` list are
+    unaffected. Consequence for self-play evidence: the MCTS agent cannot
+    deliberately choose the cheaper granted Flow or the Tomb-discounted
+    play when the plain offer is also legal, so results UNDERSTATE the
+    value of Kennen's grant and of the Tomb. Pre-existing vocabulary
+    shape (per-target Play variants already alias); out of this plan's
+    scope; a follow-up would add the flow_source / restriction bits to the
+    action key.
+
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board
 exit); #28 rewritten per addendum #11's review to assert no
