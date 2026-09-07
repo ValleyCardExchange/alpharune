@@ -14,6 +14,17 @@
 /// Test #5 (addendum #3): a champion played from the champion zone fires
 /// the trigger with play_source == ChampionZone.
 ///
+/// Fix round 1 (controller-widened scope): a hidden card revealed and
+/// played as a reaction goes through the LIVE CR 811 path,
+/// `ChainManager::stepExecuteAndPass` (src/engine/chain_manager.cpp) —
+/// NOT `GameEngine::executePlayFromHidden`, which nothing in src/ or
+/// tests/ calls (dead code, left as-is per the controller's ruling).
+/// Drives `ChainManager` + a hand-wired `TriggerManager` directly (no
+/// full `GameEngine`, mirroring `driveThroughChain`'s shape in
+/// card_test_fixture.h, since that helper doesn't cover the
+/// facedown-reaction branch) to prove play_source == Hidden and the
+/// WhenYouPlayFromNonHand dispatch on the real event-bus path.
+///
 /// Optional guard (addendum #7): EffectExecutor::createToken emits no
 /// CardPlayedEvent, so token creation can never feed this trigger.
 
@@ -23,8 +34,10 @@
 #include "cards/card_registry.h"
 #include "core/events.h"
 #include "core/game_state.h"
+#include "engine/chain_manager.h"
 #include "engine/effect_executor.h"
 #include "engine/game_engine.h"
+#include "engine/trigger_manager.h"
 
 #include <memory>
 #include <vector>
@@ -336,6 +349,143 @@ TEST_F(PlayFromNonHandTest, ChampionPlayedFromChampionZoneFiresWithChampionZoneS
     EXPECT_EQ(s.getObject(legend_id).card_counters["fired"], 1)
         << "Playing the champion from the champion zone must fire "
            "WhenYouPlayFromNonHand on the legend.";
+}
+
+// ─── Fix round 1: the LIVE hidden-reveal-as-reaction path ──────────────────
+
+TEST_F(PlayFromNonHandTest, HiddenCardRevealedAsReactionFiresWithHiddenSource) {
+    // The real CR 811 facedown-reveal-as-reaction path is
+    // ChainManager::stepExecuteAndPass: a hidden card is offered as a
+    // PlayReaction intent while still facedown, and the branch handles
+    // everything (unhide, track play, emit CardPlayedEvent, add to
+    // chain) inside ChainManager itself — GameEngine::executePlayFromHidden
+    // is a separate, dead code path (nothing in src/ or tests/ calls it).
+    //
+    // No full GameEngine here: ChainManager + a directly-wired
+    // TriggerManager, bound to the fixture's own state/events/card_db,
+    // driven the way card_test_fixture.h's driveThroughChain drives a
+    // spell through FEPR — that helper only covers hand plays, so this
+    // test assembles the same pieces by hand for the facedown-reaction
+    // branch specifically.
+    card_registry.registerCard(kNonHandWatcherLegend,
+                                std::make_unique<NonHandWatcherLegend>());
+    auto legend_id = state.createObject();
+    {
+        auto& leg = state.getObject(legend_id);
+        leg.owner = P1;
+        leg.controller = P1;
+        leg.card_def_id = kNonHandWatcherLegend;
+        leg.name = "NonHand Watcher Legend";
+        leg.card_type = CardType::Legend;
+        leg.zone = ZoneType::LegendZone;
+    }
+    state.player(P1).legend_zone = legend_id;
+
+    // A hidden card at BF#0 — offered as a PlayReaction while facedown.
+    auto hidden_card = state.createObject();
+    {
+        auto& hc = state.getObject(hidden_card);
+        hc.owner = P1;
+        hc.controller = P1;
+        hc.card_type = CardType::Spell;
+        hc.name = "Hidden Test Reaction";
+        hc.zone = ZoneType::FacedownZone;
+        hc.is_hidden = true;
+        hc.hidden_at = 0;
+    }
+    state.battlefields[0].facedown.push_back(hidden_card);
+
+    // A dummy spell already on the chain, controlled by the same
+    // player — opens the Execute/Pass priority window that the hidden
+    // reaction is offered into (CR: newest item's controller gets
+    // priority first, so P1 can respond to their own item immediately).
+    auto dummy_spell = state.createObject();
+    {
+        auto& ds = state.getObject(dummy_spell);
+        ds.owner = P1;
+        ds.controller = P1;
+        ds.card_type = CardType::Spell;
+        ds.name = "Dummy Chain Spell";
+    }
+
+    ChainManager cm(state, events, card_db);
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    cm.setEffectExecutor(&exec);
+    TriggerManager tm(state, events, card_db, cm, card_registry);
+    tm.setEffectExecutor(&exec);
+    tm.subscribe();
+
+    cm.addSpell(dummy_spell, P1, {});
+
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    // Drive the FEPR loop by hand: on the very first priority query,
+    // play the hidden card as a reaction; every subsequent query passes
+    // priority so the chain drains normally. stepExecuteAndPass only
+    // inspects chosen.type/card/targets (never the injected `actions`
+    // list), so a real legal-action generator isn't needed here — this
+    // is "driving ChainManager directly."
+    int priority_call = 0;
+    auto query_agent = [&](PlayerId, const std::vector<Intent>&) -> Intent {
+        ++priority_call;
+        if (priority_call == 1) {
+            Intent react;
+            react.type = IntentType::PlayReaction;
+            react.player = PlayerId::Player1;
+            react.card = hidden_card;
+            return react;
+        }
+        Intent pass;
+        pass.type = IntentType::PassPriority;
+        pass.player = PlayerId::Player1;
+        return pass;
+    };
+
+    cm.processFEPR(
+        query_agent,
+        [](const ChainItem&) { /* no permanents added in this test */ },
+        [&](const ChainItem& item) {
+            // Mirrors GameEngine::resolveSpell's is_ability/onTrigger vs
+            // onResolve dispatch, simplified (no target re-validation —
+            // neither item here has real targets).
+            Card* c = card_registry.get(item.card_def_id);
+            if (!c) return;
+            CardContext ctx{state, events, exec, item.controller, item.source};
+            ctx.firing_trigger = item.fired_trigger;
+            if (item.is_ability) {
+                c->onTrigger(ctx, item.targets);
+            } else {
+                c->onResolve(ctx, item.targets);
+            }
+        },
+        [](PlayerId) { return std::vector<Intent>{}; });
+
+    ASSERT_FALSE(state.chain.exists())
+        << "Sanity: the chain must have fully drained (dummy spell + the "
+           "hidden card's own spell body + the fired ability all resolve).";
+
+    ASSERT_EQ(played.size(), 1u)
+        << "Only the hidden card's reveal-and-play emits a "
+           "CardPlayedEvent (the dummy spell was already on the chain "
+           "before this test's event subscription was installed).";
+    EXPECT_EQ(played[0].object, hidden_card);
+    EXPECT_EQ(played[0].play_source, Intent::PlaySource::Hidden)
+        << "A facedown card revealed and played as a reaction through "
+           "the LIVE CR 811 path (ChainManager::stepExecuteAndPass) must "
+           "carry play_source == Hidden.";
+
+    ASSERT_TRUE(state.objectExists(legend_id));
+    EXPECT_EQ(state.getObject(legend_id).card_counters["fired"], 1)
+        << "WhenYouPlayFromNonHand must fire on the legend for a live "
+           "hidden-reveal-as-reaction play.";
+    EXPECT_EQ(state.getObject(legend_id).card_counters["subject"],
+              static_cast<int>(hidden_card))
+        << "The revealed card must be the chain item's triggering subject.";
+
+    EXPECT_FALSE(state.getObject(hidden_card).is_hidden)
+        << "Sanity: the reveal actually happened.";
 }
 
 // ─── Optional guard (addendum #7) ──────────────────────────────────────────

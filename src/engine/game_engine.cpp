@@ -1268,8 +1268,14 @@ void GameEngine::executePlayCard(const Intent& intent) {
 
     // Play source is derived from the card's zone BEFORE it's removed
     // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
-    // ChampionZone for a champion play.
-    Intent::PlaySource play_source = playSourceFor(card);
+    // ChampionZone for a champion play. Named event_play_source (not
+    // play_source) so it doesn't shadow-by-name intent.play_source
+    // below, which drives current_play_source/cost-payment concerns and
+    // can legitimately differ. Capture-before-mutation is kept here even
+    // though this function's own zone-removal block doesn't touch
+    // card.zone itself (only ps.hand/ps.champion_zone) — cheap insurance
+    // against a future change to that block silently breaking this.
+    Intent::PlaySource event_play_source = playSourceFor(card);
 
     // Remove from current zone (hand or champion zone) (CR 354: step 1)
     if (card.zone == ZoneType::Hand) {
@@ -1365,7 +1371,7 @@ void GameEngine::executePlayCard(const Intent& intent) {
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, energy_spent, play_source});
+        card.card_type, ps.cards_played_this_turn, energy_spent, event_play_source});
 
     // Store the play location on the game object so resolvePermanent can use it.
     // Permanents choose location during finalization (CR 355.2.a).
@@ -1408,7 +1414,14 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // Play source is derived from the card's zone BEFORE it's removed
     // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
     // Trash for a trash-replay (Fizz / Death from Below style plays).
-    Intent::PlaySource play_source = playSourceFor(card);
+    // Named event_play_source (not play_source) so it doesn't
+    // shadow-by-name intent.play_source below (drives
+    // current_play_source / the trash-replay-grant cost path and can
+    // legitimately differ). Capture-before-mutation is kept here even
+    // though this function's own zone-removal block doesn't touch
+    // card.zone itself (only ps.hand/ps.trash) — cheap insurance
+    // against a future change to that block silently breaking this.
+    Intent::PlaySource event_play_source = playSourceFor(card);
 
     // Remove from the source zone.
     if (card.zone == ZoneType::Hand) {
@@ -1542,7 +1555,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         }
     }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, total_energy_spent, play_source});
+        card.card_type, ps.cards_played_this_turn, total_energy_spent, event_play_source});
 
     // Add spell to chain with targets. Carry energy_spent and repeats_paid
     // onto the chain item — ChainManager re-resolves the spell `repeats_paid`

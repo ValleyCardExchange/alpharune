@@ -230,6 +230,19 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             auto& card = state_.getObject(chosen.card);
             auto& ps = state_.player(current);
 
+            // Play source is derived from the card's zone/hidden-status
+            // (Kennen spec §2/addendum #2) BEFORE is_hidden is cleared
+            // below — this is the LIVE CR 811 facedown-reveal-as-reaction
+            // path (a card played this way is offered as a PlayReaction
+            // intent while still hidden, unlike the dead
+            // GameEngine::executePlayFromHidden sites, which nothing in
+            // src/ or tests/ calls). ChainManager can't call
+            // GameEngine::playSourceFor, so it uses the shared
+            // playSourceForZone helper directly, same as
+            // EffectExecutor::playIgnoringCost.
+            Intent::PlaySource event_play_source =
+                playSourceForZone(card.zone, card.is_hidden);
+
             if (card.is_hidden) {
                 // Playing from facedown — remove from BF facedown zone, no cost
                 for (auto& bf : state_.battlefields) {
@@ -258,7 +271,8 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             int energy_spent = (card.card_def_id != kInvalidId)
                 ? card_db_.get(card.card_def_id).energy_cost : 0;
             events_.emit(CardPlayedEvent{chosen.card, current,
-                card.card_type, ps.cards_played_this_turn, energy_spent});
+                card.card_type, ps.cards_played_this_turn, energy_spent,
+                event_play_source});
 
             // Add to chain with targets
             addSpell(chosen.card, current, chosen.targets);
