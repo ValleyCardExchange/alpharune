@@ -1397,6 +1397,95 @@ void GameEngine::executePlayCard(const Intent& intent) {
     runChain();
 }
 
+namespace {
+
+// ── Sandswept Tomb (792) — "Each spell that chooses one or more units here
+//    that are friendly to it costs [A] less." ────────────────────────────────
+//
+// The discount is a POWER (rune) reduction of 1 in ANY domain, and the flag
+// lives on the BATTLEFIELD (BattlefieldState::friendly_spell_power_discount),
+// so it applies to whoever is playing the spell — "friendly to IT" means
+// friendly to the spell's controller, and both players benefit from the Tomb.
+// These helpers are the single source of truth for "does this play earn the
+// discount, and how much", shared by the two action generators and by
+// executePlaySpell.
+
+/// The discount earned by a play whose chosen targets are already known: the
+/// sum over the DISTINCT flagged battlefields at which `player` has a chosen
+/// friendly unit (two Tombs each independently say "costs [A] less").
+int tombDiscountForTargets(const GameState& state, PlayerId player,
+                            const std::vector<GameObjectId>& targets) {
+    int total = 0;
+    std::vector<BattlefieldId> counted;
+    for (auto t : targets) {
+        if (!state.objectExists(t)) continue;
+        const auto& obj = state.getObject(t);
+        if (!obj.isUnit() || obj.controller != player) continue;
+        auto at = obj.battlefieldId();
+        if (!at) continue;
+        if (std::find(counted.begin(), counted.end(), *at) != counted.end())
+            continue;
+        for (const auto& b : state.battlefields) {
+            if (b.id != *at || b.friendly_spell_power_discount <= 0) continue;
+            total += b.friendly_spell_power_discount;
+            counted.push_back(*at);
+            break;
+        }
+    }
+    return total;
+}
+
+/// Does `player` have at least one legal target that is a friendly unit
+/// located at battlefield `bf`? (The eligibility gate for a restricted offer.)
+bool hasFriendlyUnitTargetAt(const GameState& state, PlayerId player,
+                              const std::vector<GameObjectId>& legal_targets,
+                              BattlefieldId bf) {
+    for (auto t : legal_targets) {
+        if (!state.objectExists(t)) continue;
+        const auto& obj = state.getObject(t);
+        if (!obj.isUnit() || obj.controller != player) continue;
+        auto at = obj.battlefieldId();
+        if (at && *at == bf) return true;
+    }
+    return false;
+}
+
+/// Upper bound on the discount ANY offer for this card could earn — used only
+/// as the cheap up-front cost gate, before the per-offer price is known.
+int bestTombDiscount(const GameState& state, PlayerId player, int power_cost,
+                      const std::vector<GameObjectId>& legal_targets) {
+    if (power_cost <= 0) return 0;   // nothing to discount
+    int total = 0;
+    for (const auto& b : state.battlefields) {
+        if (b.friendly_spell_power_discount <= 0) continue;
+        if (!hasFriendlyUnitTargetAt(state, player, legal_targets, b.id)) continue;
+        total += b.friendly_spell_power_discount;
+    }
+    return total;
+}
+
+/// Stage a power discount across an affordability query. The two action
+/// generators are const — they only read state to build the legal list — but
+/// the field the cost sites read (PlayerState::transient_power_discount) is
+/// state, so it is written through a const_cast and restored by the
+/// destructor. Nothing runs between the two, so the query stays observably
+/// const; the engine object itself is never const, only these query methods.
+struct StagedPowerDiscount {
+    PlayerState* ps = nullptr;
+    int saved = 0;
+    StagedPowerDiscount(const GameState& state, PlayerId player, int amount) {
+        if (amount <= 0) return;
+        ps = &const_cast<GameState&>(state).player(player);
+        saved = ps->transient_power_discount;
+        ps->transient_power_discount = amount;
+    }
+    ~StagedPowerDiscount() { if (ps) ps->transient_power_discount = saved; }
+    StagedPowerDiscount(const StagedPowerDiscount&) = delete;
+    StagedPowerDiscount& operator=(const StagedPowerDiscount&) = delete;
+};
+
+}  // namespace
+
 void GameEngine::executePlaySpell(const Intent& intent) {
     auto& ps = state_.player(intent.player);
     auto& card = state_.getObject(intent.card);
@@ -1409,6 +1498,29 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         }
         events_.logTrace("SPELL: " + card.name + " (id=" + std::to_string(intent.card) +
                          ") targets=[" + tgt_str + "]");
+    }
+
+    // ── Sandswept Tomb (792): what this play's POWER discount is ──
+    //
+    // Two shapes, decided BEFORE anything is paid (both cost paths below read
+    // it):
+    //   • a RESTRICTED intent — the play committed to choosing at a named
+    //     battlefield, so the discount is committed too and is read straight
+    //     off that battlefield's flag. A claimed restriction on a battlefield
+    //     that carries no Tomb reads 0, so a hand-built intent cannot invent
+    //     a discount;
+    //   • otherwise, whatever this play's already-chosen (play-time) targets
+    //     earn — a friendly unit at a flagged battlefield.
+    int tomb_power_discount = 0;
+    if (intent.target_battlefield_restriction.has_value()) {
+        for (const auto& b : state_.battlefields) {
+            if (b.id != *intent.target_battlefield_restriction) continue;
+            tomb_power_discount = b.friendly_spell_power_discount;
+            break;
+        }
+    } else {
+        tomb_power_discount =
+            tombDiscountForTargets(state_, intent.player, intent.targets);
     }
 
     // ── Flow (CR 829): validate the claim BEFORE anything mutates ──
@@ -1456,6 +1568,14 @@ void GameEngine::executePlaySpell(const Intent& intent) {
             reject(std::string("no live ") +
                    (wants_granted ? "granted" : "printed") + " flow cost");
             return;
+        }
+        // Sandswept Tomb (792): Flow REPLACES the base cost, so the [A]
+        // discount comes off the FLOW cost's power component instead — the
+        // same reduction the flow generator priced this offer with. Applied
+        // to the local copy, so the payability check, the payment and the
+        // trace all agree.
+        if (tomb_power_discount > 0) {
+            flow_cost.power = std::max(0, flow_cost.power - tomb_power_discount);
         }
         bool payable = false;
         if (flow_cost.any_domain) {
@@ -1557,7 +1677,13 @@ void GameEngine::executePlaySpell(const Intent& intent) {
                 tgt_disc = std::max(tgt_disc,
                     state_.getObject(t).spells_targeting_me_cost_reduction);
         ps.transient_play_discount = tgt_disc;
+        // Sandswept Tomb (792): the POWER half of the same idea. canAfford
+        // and beginCostPayment subtract it from the power requirement; it is
+        // staged only across this one payment and cleared immediately after,
+        // on this single exit path (payCardCost cannot throw past it).
+        ps.transient_power_discount = tomb_power_discount;
         payCardCost(intent.player, intent.card);
+        ps.transient_power_discount = 0;
         ps.transient_play_discount = 0;
         ps.current_play_source = Intent::PlaySource::Hand;
 
@@ -1684,6 +1810,11 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         // leaves the chain, not trashed. Flag it here; the disposal sites
         // (ChainManager::stepResolve, the counter/revert path) read it.
         if (paid_via_flow) item.banish_on_leave = true;
+        // Sandswept Tomb (792) — the commitment the discounted offer made.
+        // Card::pickTarget reads it off the resuming chain item and filters
+        // the resolve-time legal list to units at that battlefield, so the
+        // choice can never dodge the condition the discount was paid for.
+        item.target_battlefield_restriction = intent.target_battlefield_restriction;
         break;
     }
 
@@ -2873,7 +3004,10 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
     for (auto card_id : ps.hand) {
         auto& card = state_.getObject(card_id);
         if (!card.isSpell()) continue;
-        if (!canAfford(player, card_id)) continue;
+        // Affordability is checked BELOW, once the legal targets are known:
+        // Sandswept Tomb (792) can make a specific play cheaper than the
+        // card's printed cost, so a single up-front canAfford() would drop
+        // offers that are legal at their own discounted price.
 
         // Check timing keywords
         bool has_action = card.keywords.has(Keyword::Action);
@@ -2918,6 +3052,19 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             ? spell_card->getTargetRequirements()
             : TargetRequirements{};
 
+        // Cost gate. Priced at the BEST discount any single offer for this
+        // card could earn (Sandswept Tomb, 792) — a cheap superset filter;
+        // every offer below is then re-priced with the discount IT earns, so
+        // nothing unaffordable escapes.
+        const int card_power_cost = (card.card_def_id != kInvalidId)
+            ? card_db_.get(card.card_def_id).power_cost : 0;
+        const int tomb_best =
+            bestTombDiscount(state_, player, card_power_cost, legal_targets);
+        {
+            StagedPowerDiscount stage(state_, player, tomb_best);
+            if (!canAfford(player, card_id)) continue;
+        }
+
         // Determine intent type based on context
         IntentType intent_type = IntentType::PlayCard;
         if (state_.turn.isShowdownOpen()) {
@@ -2937,6 +3084,13 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
         // shape as Accelerate's "you may pay additional" — a yes/no at
         // cost time, not a pre-encoded vocab slot.
         auto emit = [&](Intent play, int /*R*/) {
+            // Price THIS offer with the discount its own chosen targets earn
+            // (Sandswept Tomb, 792). Zero for a target-free offer and for a
+            // resolve-time-target offer — the restricted variants emitted
+            // below carry their own, committed, discount.
+            StagedPowerDiscount stage(state_, player,
+                tombDiscountForTargets(state_, player, play.targets));
+            if (!canAfford(player, card_id)) return;
             actions.push_back(play);
         };
         constexpr int kSingleEmit = 0;  // sentinel arg for emit() readability
@@ -2964,6 +3118,36 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             // targets intentionally empty — agent picks via
             // pickTarget / pickTargetPair at resolve time.
             emit(play, kSingleEmit);
+
+            // Sandswept Tomb (792) — the restricted offer. A resolve-time
+            // target means the offer cannot know whether the discount's
+            // condition will be met, so the generator emits a SECOND intent
+            // per flagged battlefield where a legal friendly-unit target
+            // exists: taking it commits the play to choosing there
+            // (Card::pickTarget filters the resolve-time list to that
+            // battlefield) and prices it with the discount.
+            //
+            // Single-target picks only. A PAIR pick resolves through
+            // Card::pickTargetPair, which has no restriction filter — with 20+
+            // callers building their two lists in card-specific ways there is
+            // no generic filter that both enforces the commitment and leaves
+            // every one of them correct. Emitting a restricted offer there
+            // would hand out a discount the play need not earn, so pair-pick
+            // spells are simply never offered one (they pay full price).
+            if (spell_card->needsPlayTimeTarget() &&
+                !spell_card->needsPlayTimeTargetPair() && card_power_cost > 0) {
+                for (const auto& bf : state_.battlefields) {
+                    if (bf.friendly_spell_power_discount <= 0) continue;
+                    if (!hasFriendlyUnitTargetAt(state_, player, legal_targets,
+                                                  bf.id)) continue;
+                    StagedPowerDiscount stage(state_, player,
+                                               bf.friendly_spell_power_discount);
+                    if (!canAfford(player, card_id)) continue;
+                    Intent restricted = play;
+                    restricted.target_battlefield_restriction = bf.id;
+                    actions.push_back(restricted);
+                }
+            }
             continue;
         }
 
@@ -3116,24 +3300,38 @@ void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
         // addendum #1) — affordability is checked against the FLOW cost,
         // never the printed one.
         for (const auto& offer : offers) {
-            bool affordable = false;
-            if (offer.cost.any_domain) {
-                for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
-                    if (canPayAdditionalCost(player, offer.cost.energy,
-                                              offer.cost.power,
-                                              static_cast<Domain>(di))) {
-                        affordable = true;
-                        break;
+            // Flow REPLACES the base cost, so Sandswept Tomb's [A] discount
+            // comes off the FLOW cost's power component. The reduced power is
+            // passed explicitly rather than staged: this path prices through
+            // canPayAdditionalCost, which takes the cost as arguments.
+            auto flowAffordable = [&](int power) {
+                if (offer.cost.any_domain) {
+                    for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
+                        if (canPayAdditionalCost(player, offer.cost.energy, power,
+                                                  static_cast<Domain>(di)))
+                            return true;
                     }
+                    return false;
                 }
-            } else {
-                affordable = canPayAdditionalCost(player, offer.cost.energy,
-                                                   offer.cost.power,
-                                                   offer.cost.power_domain);
-            }
-            if (!affordable) continue;
+                return canPayAdditionalCost(player, offer.cost.energy, power,
+                                             offer.cost.power_domain);
+            };
+            auto discountedPower = [&](int discount) {
+                return std::max(0, offer.cost.power - discount);
+            };
 
-            auto make = [&](std::vector<GameObjectId> tgts) {
+            // Cheap up-front gate, priced at the BEST discount any offer for
+            // this cost could earn; each emission below re-prices with the
+            // discount IT earns.
+            if (!flowAffordable(discountedPower(
+                    bestTombDiscount(state_, player, offer.cost.power,
+                                      legal_targets))))
+                continue;
+
+            auto emitPlay = [&](std::vector<GameObjectId> tgts,
+                                 std::optional<BattlefieldId> restriction,
+                                 int discount) {
+                if (!flowAffordable(discountedPower(discount))) return;
                 Intent play;
                 play.type = intent_type;
                 play.player = player;
@@ -3141,13 +3339,33 @@ void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
                 play.play_source = Intent::PlaySource::Trash;
                 play.flow_source = offer.source;
                 play.targets = std::move(tgts);
+                play.target_battlefield_restriction = restriction;
                 actions.push_back(play);
+            };
+            auto make = [&](std::vector<GameObjectId> tgts) {
+                const int discount =
+                    tombDiscountForTargets(state_, player, tgts);
+                emitPlay(std::move(tgts), std::nullopt, discount);
             };
 
             if (spell_card && req.count > 0 &&
                 (spell_card->needsPlayTimeTarget() ||
                  spell_card->needsPlayTimeTargetPair())) {
                 make({});                              // agent picks at resolve
+                // Sandswept Tomb (792) — the restricted flow offer, the same
+                // commitment the hand generator emits (see generateSpellActions
+                // for why pair picks are excluded).
+                if (spell_card->needsPlayTimeTarget() &&
+                    !spell_card->needsPlayTimeTargetPair() &&
+                    offer.cost.power > 0) {
+                    for (const auto& bf : state_.battlefields) {
+                        if (bf.friendly_spell_power_discount <= 0) continue;
+                        if (!hasFriendlyUnitTargetAt(state_, player,
+                                                      legal_targets, bf.id))
+                            continue;
+                        emitPlay({}, bf.id, bf.friendly_spell_power_discount);
+                    }
+                }
             } else if (req.count == 0 || (req.optional && legal_targets.empty())) {
                 make({});
             } else if (req.count == 2) {
@@ -4106,11 +4324,13 @@ void GameEngine::recalculateAuras() {
         ps.zilean_present = false;               // Zilean, Time Mage
     }
     // Per-BF aura-derived flags (Mageseeker Investigator / Noxus Saboteur /
-    // Altar of Blood). Reset here; re-asserted by unit/BF applyPassiveAura.
+    // Altar of Blood / Sandswept Tomb). Reset here; re-asserted by unit/BF
+    // applyPassiveAura.
     for (auto& bf : state_.battlefields) {
         bf.surcharge_enemy_multi_move = false;
         bf.opp_hidden_unrevealable = false;
         bf.death_recall_for_pay = false;
+        bf.friendly_spell_power_discount = 0;   // Sandswept Tomb (792)
     }
 
     // Step 1b: Refresh per-object targeting-protection flags from each
@@ -5227,6 +5447,16 @@ bool GameEngine::canAfford(PlayerId player, GameObjectId card_obj) const {
     energy_needed = std::max(min_cost, energy_needed);
     energy_needed = std::max(0, energy_needed);
 
+    // Sandswept Tomb (792): "Each spell that chooses one or more units here
+    // that are friendly to it costs [A] less." A POWER discount, staged by
+    // the caller for the specific play being priced (the action generators
+    // stage it per offer; executePlaySpell stages it around payment). Applied
+    // BEFORE the rune partition below, because that partition only bothers
+    // matching domains while power is still owed. The DOMAIN of the remaining
+    // power is unchanged — a rune of the card's domain is simply not recycled.
+    power_needed -= ps_const.transient_power_discount;
+    power_needed = std::max(0, power_needed);
+
     // Count available runes in base, partitioned by ready/exhausted
     // and matching/non-matching-domain. The CR cost-payment ordering
     // (exhaust ready runes for energy, THEN recycle exhausted runes
@@ -5398,6 +5628,12 @@ GameEngine::CostPaymentAdvance GameEngine::beginCostPayment(
     energy_needed -= ps.transient_play_discount;
     energy_needed = std::max(min_cost, energy_needed);
     energy_needed = std::max(0, energy_needed);
+    // Sandswept Tomb (792): POWER discount staged in executePlaySpell for the
+    // specific play being paid for. Mirrors the energy discount above and
+    // matches canAfford, so what was offered is what gets charged. The domain
+    // of the remaining power is unchanged.
+    power_needed -= ps.transient_power_discount;
+    power_needed = std::max(0, power_needed);
 
     // Consume one-shot modifiers that applied
     ps.cost_modifiers.erase(

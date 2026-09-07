@@ -268,6 +268,33 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
     }
     auto& ri = *ri_opt;
 
+    // ── Sandswept Tomb (792): the restricted play's commitment ──
+    //
+    // "Each spell that chooses one or more units here that are friendly to it
+    // costs [A] less." A spell that picks its target at RESOLVE time was
+    // offered a second, discounted intent that COMMITTED it to choosing at a
+    // named battlefield; executePlaySpell paid the discount and stamped the
+    // battlefield onto the chain item. Enforce that commitment here, in the
+    // one place every resolve-time single-target pick goes through, so no
+    // card needs to know about the Tomb: narrow the legal list to friendly
+    // units at that battlefield before publishing it. If nothing survives,
+    // the empty-list branch below handles it exactly like a target that
+    // vanished before resolution.
+    std::vector<GameObjectId> restricted;
+    const std::vector<GameObjectId>* legal_p = &legal_targets;
+    if (ri.target_battlefield_restriction.has_value()) {
+        const auto bf = *ri.target_battlefield_restriction;
+        for (auto t : legal_targets) {
+            if (!ctx.state.objectExists(t)) continue;
+            const auto& obj = ctx.state.getObject(t);
+            if (!obj.isUnit() || obj.controller != ctx.controller) continue;
+            auto at = obj.battlefieldId();
+            if (at && *at == bf) restricted.push_back(t);
+        }
+        legal_p = &restricted;
+    }
+    const std::vector<GameObjectId>& legal = *legal_p;
+
     // resume_point reservations: 6 (publish) → 7 (consume) → 8 (done).
     // Distinct from pickXAmount (0/1/2 + data[0]) and pickMode
     // (3/4/5 + data[1]) so all three can coexist in one Card's
@@ -276,7 +303,7 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
     if (ri.resume_point < 6) ri.resume_point = 6;
 
     if (ri.resume_point == 6) {
-        if (legal_targets.empty()) {
+        if (legal.empty()) {
             ctx.events.logTrace("TGT_NOT_OFFERED: " + label +
                                  " (no legal targets at resolve time)");
             ri.resume_point = 8;
@@ -296,9 +323,9 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
         // Bounty Hunter slot — known limitation, same as discard /
         // predict picks today.
         std::vector<Intent> options;
-        options.reserve(legal_targets.size());
+        options.reserve(legal.size());
         std::string label_summary;
-        for (auto t : legal_targets) {
+        for (auto t : legal) {
             Intent i;
             i.type = IntentType::MakeChoice;
             i.player = ctx.controller;
@@ -311,7 +338,7 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
         }
         ctx.events.logTrace("TGT_PROMPT: " + label + " [" + label_summary +
                              "] (agent decides among " +
-                             std::to_string(legal_targets.size()) +
+                             std::to_string(legal.size()) +
                              " targets)");
         ctx.executor.requestChoice(ctx.controller, std::move(options),
                                     "target: " + label);
@@ -321,8 +348,8 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
 
     if (ri.resume_point == 7) {
         auto picked = ctx.executor.takeChoice();
-        GameObjectId t = legal_targets.empty()
-            ? kInvalidId : legal_targets.front();
+        GameObjectId t = legal.empty()
+            ? kInvalidId : legal.front();
         if (picked.has_value() && !picked->chosen_objects.empty()) {
             t = picked->chosen_objects.front();
         }
@@ -341,7 +368,7 @@ GameObjectId Card::pickTarget(CardContext& ctx, const std::string& label,
     if (ri.resume_data.size() >= 3) {
         return static_cast<GameObjectId>(ri.resume_data[2]);
     }
-    return legal_targets.empty() ? kInvalidId : legal_targets.front();
+    return legal.empty() ? kInvalidId : legal.front();
 }
 
 std::pair<GameObjectId, GameObjectId> Card::pickTargetPair(
