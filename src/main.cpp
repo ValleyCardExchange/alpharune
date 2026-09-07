@@ -8,9 +8,9 @@
 /// Agents are wired via `buildAgent(spec, ...)`:
 ///   random            — uniform random over legal actions
 ///   human             — block on browser input through HumanAgent
-///   mcts:sims=N[,eval=score|corpus]
+///   mcts:sims=N[,eval=score|corpus][,prior=<path>]
 ///                     — OpenSpiel MCTSBot wrapped as AgentInterface
-///   ismcts:sims=N[,eval=score|corpus]
+///   ismcts:sims=N[,eval=score|corpus][,prior=<path>]
 ///                     — OpenSpiel ISMCTSBot wrapped as AgentInterface
 ///
 /// When any seat is human:
@@ -196,12 +196,12 @@ std::unique_ptr<AgentInterface> buildAgent(const AgentSpec& spec,
     if (spec.kind == "mcts") {
         return std::make_unique<MctsAgent>(deck1, deck2, registry,
                                             game_seed, derived_seed, spec.sims,
-                                            spec.eval);
+                                            spec.eval, spec.prior);
     }
     if (spec.kind == "ismcts") {
         return std::make_unique<IsMctsAgent>(deck1, deck2, registry,
                                               game_seed, derived_seed, spec.sims,
-                                              spec.eval);
+                                              spec.eval, spec.prior);
     }
     throw std::runtime_error("Unsupported agent spec '" + spec.raw + "'");
 }
@@ -247,6 +247,20 @@ int main(int argc, char* argv[]) {
         "                              docs/superpowers/specs/\n"
         "                              2026-09-07-corpus-evaluator-design.md\n"
         "                    e.g. --agent1 mcts:sims=50,eval=corpus\n"
+        "                    Optional ,prior=<path> loads a schema-v1 JSON\n"
+        "                    file overriding some or all of the search\n"
+        "                    prior's action-family weights and (for\n"
+        "                    eval=corpus) the evaluator's term weights, for\n"
+        "                    one matchup. Every key is optional; unknown\n"
+        "                    keys are a hard error; a missing/unparsable\n"
+        "                    file is a hard error. Absent prior=, behaviour\n"
+        "                    is byte-identical to today's hard-coded\n"
+        "                    weights. See docs/superpowers/specs/\n"
+        "                    2026-09-07-replay-loop-iter0-design.md\n"
+        "                    ('L4 — prior injection') and the sample at\n"
+        "                    docs/superpowers/priors/example.prior.json\n"
+        "                    e.g. --agent1 mcts:sims=50,eval=corpus,\n"
+        "                    prior=docs/superpowers/priors/kennen-vs-rengar.json\n"
         "  ismcts:sims=N     OpenSpiel ISMCTSBot for imperfect-info search.\n"
         "                    Same N semantics as MCTS. Currently behaves\n"
         "                    like MCTS at search time — proper hidden-info\n"
@@ -279,12 +293,12 @@ int main(int argc, char* argv[]) {
          "(validation/export tool; does not require decks)")
         ("agent1", po::value<std::string>()->default_value("random"),
          "Player 1 agent spec (see top of --help for full descriptions). "
-         "One of: random | human | mcts:sims=N[,eval=score|corpus] | "
-         "ismcts:sims=N[,eval=score|corpus]")
+         "One of: random | human | mcts:sims=N[,eval=score|corpus][,prior=<path>] | "
+         "ismcts:sims=N[,eval=score|corpus][,prior=<path>]")
         ("agent2", po::value<std::string>()->default_value("random"),
          "Player 2 agent spec (see top of --help for full descriptions). "
-         "One of: random | human | mcts:sims=N[,eval=score|corpus] | "
-         "ismcts:sims=N[,eval=score|corpus]")
+         "One of: random | human | mcts:sims=N[,eval=score|corpus][,prior=<path>] | "
+         "ismcts:sims=N[,eval=score|corpus][,prior=<path>]")
         ("web", po::value<std::string>()->default_value("auto"),
          "Web UI mode: auto (default — ON if any seat is human, else OFF), "
          "on (force ON), off (force OFF, even with human seats)")

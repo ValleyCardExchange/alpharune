@@ -82,12 +82,33 @@ inline constexpr double kCorpusWeightEmpoweredLegend = 0.1;
 // — top pilots run 0-2 ready runes too); hand size (the previous
 // evaluator removed it as noise); seat; anything card-name specific.
 
-/// Evaluate `state` from both players' perspectives.
-/// Returns `{value_for_player1, value_for_player2}`, each in [-1, +1] and
-/// exactly antisymmetric (`second == -first`).
+/// The six term weights above, packaged so a `prior=<path>` JSON file
+/// (see docs/superpowers/specs/2026-09-07-replay-loop-iter0-design.md,
+/// "L4 — prior injection") can override some or all of them per matchup.
+/// Every field default-initializes from the `kCorpusWeight*` constant it
+/// replaces, so the constants stay the single source of truth for the
+/// defaults — nothing here is retyped. Caps (`kCorpus*Cap`) are NOT part
+/// of schema v1 and stay hard-coded.
+struct CorpusWeights {
+    double score            = kCorpusWeightScore;
+    double battlefield      = kCorpusWeightBattlefield;
+    double unit             = kCorpusWeightUnit;
+    double held_interaction = kCorpusWeightHeldInteraction;
+    double trash_resource   = kCorpusWeightTrashResource;
+    double empowered_legend = kCorpusWeightEmpoweredLegend;
+};
+
+/// Evaluate `state` from both players' perspectives using the default
+/// (hard-coded) weights. Returns `{value_for_player1, value_for_player2}`,
+/// each in [-1, +1] and exactly antisymmetric (`second == -first`).
 ///
 /// Terminal states are NOT this function's business — the OpenSpiel
 /// wrapper short-circuits to `State::Returns()` before calling in.
 std::pair<double, double> corpusEvaluate(const GameState& state);
+
+/// Same contract as above, with `weights` in place of the defaults —
+/// e.g. loaded from a `prior=<path>` file's `evaluator_weights`.
+std::pair<double, double> corpusEvaluate(const GameState& state,
+                                         const CorpusWeights& weights);
 
 }  // namespace riftbound

@@ -26,6 +26,12 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
+#include <atomic>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -149,6 +155,78 @@ TEST(AgentSpecParse, EvalErrorMentionsTheOfferedValues) {
 TEST(EvaluatorKindToString, RoundTripsTheSpecTokens) {
     EXPECT_STREQ(toString(EvaluatorKind::Score), "score");
     EXPECT_STREQ(toString(EvaluatorKind::Corpus), "corpus");
+}
+
+// ── New: prior=<path> (L4 — prior injection) ────────────────────────────────
+//
+// `parseAgentSpec` validates the file exists and parses AT PARSE TIME
+// (spec: "L4 — prior injection"), so a bad `prior=` path throws from
+// `parseAgentSpec` itself rather than surfacing later at agent
+// construction. `AgentSpec::prior` holds the already-loaded `PriorConfig`
+// (default-constructed — i.e. today's hard-coded weights — when no
+// `prior=` key is given), so `prior=` absent is byte-identical to before
+// this option existed.
+
+namespace {
+
+class TempPriorFile {
+public:
+    explicit TempPriorFile(const std::string& contents) {
+        static std::atomic<int> counter{0};
+        path_ = (std::filesystem::temp_directory_path() /
+                 ("rb_test_agent_spec_prior_" + std::to_string(::getpid()) + "_" +
+                  std::to_string(counter++) + ".json"))
+                    .string();
+        std::ofstream f(path_);
+        f << contents;
+    }
+    ~TempPriorFile() { std::remove(path_.c_str()); }
+    const std::string& path() const { return path_; }
+
+private:
+    std::string path_;
+};
+
+}  // namespace
+
+TEST(AgentSpecParse, NoPriorKeyLeavesPriorAtDefaults) {
+    auto spec = parseAgentSpec("mcts:sims=50");
+    EXPECT_DOUBLE_EQ(spec.prior.family.play, 4.0);
+    EXPECT_DOUBLE_EQ(spec.prior.evaluator.score, kCorpusWeightScore);
+}
+
+TEST(AgentSpecParse, PriorKeyLoadsAndMergesTheFile) {
+    TempPriorFile f(R"({"action_family_weights": {"play": 9.0}})");
+    auto spec = parseAgentSpec("mcts:sims=50,prior=" + f.path());
+    EXPECT_DOUBLE_EQ(spec.prior.family.play, 9.0);
+    // Untouched keys still hold their defaults.
+    EXPECT_DOUBLE_EQ(spec.prior.family.concede, 0.01);
+    EXPECT_DOUBLE_EQ(spec.prior.evaluator.score, kCorpusWeightScore);
+}
+
+TEST(AgentSpecParse, PriorKeyMissingFileThrows) {
+    EXPECT_THROW(parseAgentSpec("mcts:sims=50,prior=/nonexistent/path.json"),
+                 std::runtime_error);
+}
+
+TEST(AgentSpecParse, PriorKeyBadJsonThrows) {
+    TempPriorFile f("{ not json ");
+    EXPECT_THROW(parseAgentSpec("mcts:sims=50,prior=" + f.path()),
+                 std::runtime_error);
+}
+
+TEST(AgentSpecParse, PriorKeyUnknownJsonKeyThrows) {
+    TempPriorFile f(R"({"bogus": 1})");
+    EXPECT_THROW(parseAgentSpec("mcts:sims=50,prior=" + f.path()),
+                 std::runtime_error);
+}
+
+TEST(AgentSpecParse, PriorKeyWorksAlongsideEvalAndOrderDoesNotMatter) {
+    TempPriorFile f(R"({"evaluator_weights": {"battlefield": 2.0}})");
+    auto spec = parseAgentSpec("mcts:eval=corpus,prior=" + f.path() + ",sims=50");
+    EXPECT_EQ(spec.eval, EvaluatorKind::Corpus);
+    EXPECT_EQ(spec.sims, 50);
+    EXPECT_DOUBLE_EQ(spec.prior.evaluator.battlefield, 2.0);
 }
 
 }  // namespace

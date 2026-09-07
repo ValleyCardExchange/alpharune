@@ -23,7 +23,7 @@
 /// Wiring: see `src/main_play.cpp`'s `buildAgent("mcts:sims=N", ...)`.
 
 #include "agent_interface.h"
-#include "agent_spec.h"   // EvaluatorKind
+#include "agent_spec.h"   // EvaluatorKind, PriorConfig
 
 #include <cstdint>
 #include <memory>
@@ -52,13 +52,19 @@ public:
     /// the historical score-difference heuristic; `Corpus` is the
     /// six-term corpus heuristic in `corpus_evaluator.h`. The default
     /// keeps every pre-Task-12 call site behaving exactly as before.
+    /// `prior` overrides the search prior's family weights and (for
+    /// `eval=corpus`) the evaluator's term weights — see `agent_spec.h`
+    /// and `prior=<path>` in the `--agent1`/`--agent2` spec grammar. The
+    /// default `PriorConfig{}` reproduces today's hard-coded weights
+    /// exactly, so every pre-L4 call site behaves byte-identically.
     MctsAgent(std::string deck1_path,
               std::string deck2_path,
               std::string registry_path,
               uint64_t    engine_seed,
               uint64_t    mcts_seed,
               int         sims,
-              EvaluatorKind eval = EvaluatorKind::Score);
+              EvaluatorKind eval = EvaluatorKind::Score,
+              PriorConfig prior = PriorConfig{});
     ~MctsAgent() override;
 
     MctsAgent(const MctsAgent&) = delete;
@@ -86,7 +92,8 @@ public:
                 uint64_t    engine_seed,
                 uint64_t    mcts_seed,
                 int         sims,
-                EvaluatorKind eval = EvaluatorKind::Score);
+                EvaluatorKind eval = EvaluatorKind::Score,
+                PriorConfig prior = PriorConfig{});
     ~IsMctsAgent() override;
 
     IsMctsAgent(const IsMctsAgent&) = delete;

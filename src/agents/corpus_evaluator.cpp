@@ -9,12 +9,17 @@
 namespace riftbound {
 
 std::pair<double, double> corpusEvaluate(const GameState& state) {
+    return corpusEvaluate(state, CorpusWeights{});
+}
+
+std::pair<double, double> corpusEvaluate(const GameState& state,
+                                         const CorpusWeights& weights) {
     const auto& p1 = state.player(PlayerId::Player1);
     const auto& p2 = state.player(PlayerId::Player2);
     const double victory = static_cast<double>(std::max(1, state.mode.victory_score));
 
     // ── Term 1: score difference (weight 1.0, dominant) ──
-    double value = kCorpusWeightScore *
+    double value = weights.score *
                    static_cast<double>(p1.score - p2.score) / victory;
 
     // Accumulate the remaining terms per side, then take the difference,
@@ -29,7 +34,7 @@ std::pair<double, double> corpusEvaluate(const GameState& state) {
     // A battlefield held at turn start is the next point. Contested
     // splits it: half to the holder, half to the contester — so a
     // battlefield the opponent is contesting is worth nothing net.
-    const double w_bf = kCorpusWeightBattlefield / victory;
+    const double w_bf = weights.battlefield / victory;
     for (const auto& bf : state.battlefields) {
         const bool contested =
             bf.is_contested && bf.contested_by != PlayerId::None;
@@ -43,7 +48,7 @@ std::pair<double, double> corpusEvaluate(const GameState& state) {
     // "Never empty" — a wide, rebuildable board is the antidote to board
     // evaporation. Diminishing so the fourth body is worth a quarter of
     // the first, and capped so a board dump can't outweigh a point.
-    const double w_unit = kCorpusWeightUnit / victory;
+    const double w_unit = weights.unit / victory;
     for (auto p : {PlayerId::Player1, PlayerId::Player2}) {
         const int units =
             static_cast<int>(state.allUnitsControlledBy(p).size());
@@ -56,7 +61,7 @@ std::pair<double, double> corpusEvaluate(const GameState& state) {
     // ── Term 4: held interaction ──
     // "Play to your outs / don't tap out": a Reaction spell still in hand
     // is insurance. Capped at two — a third copy is not a third out.
-    const double w_hold = kCorpusWeightHeldInteraction / victory;
+    const double w_hold = weights.held_interaction / victory;
     for (auto p : {PlayerId::Player1, PlayerId::Player2}) {
         int held = 0;
         for (auto oid : state.player(p).hand) {
@@ -73,7 +78,7 @@ std::pair<double, double> corpusEvaluate(const GameState& state) {
     // is LIVE right now: a printed [Flow] keyword, or a granted flow
     // stamped THIS turn (CR 829; grants expire by evaluation, not by a
     // scheduled cleanup, so a stale stamp must read as dead). Cap 3.
-    const double w_trash = kCorpusWeightTrashResource / victory;
+    const double w_trash = weights.trash_resource / victory;
     for (auto p : {PlayerId::Player1, PlayerId::Player2}) {
         int live = 0;
         for (auto oid : state.player(p).trash) {
@@ -93,7 +98,7 @@ std::pair<double, double> corpusEvaluate(const GameState& state) {
     // ── Term 6: empowered legend ──
     // Empowered is a stored resource, not decoration — Heart of the
     // Tempest's action spends it for Assault 2.
-    const double w_emp = kCorpusWeightEmpoweredLegend / victory;
+    const double w_emp = weights.empowered_legend / victory;
     for (auto p : {PlayerId::Player1, PlayerId::Player2}) {
         const auto legend = state.player(p).legend_zone;
         if (legend == kInvalidId || !state.objectExists(legend)) continue;

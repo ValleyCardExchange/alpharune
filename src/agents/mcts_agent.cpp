@@ -43,6 +43,9 @@ namespace {
 // Selected per agent by `--agent1 mcts:sims=N,eval=score|corpus`.
 class RiftboundEvaluatorBase : public ::open_spiel::algorithms::Evaluator {
 public:
+    explicit RiftboundEvaluatorBase(FamilyWeights family)
+        : family_(std::move(family)) {}
+
     std::vector<double> Evaluate(const ::open_spiel::State& state) override {
         // Terminal: use the canonical Returns directly so MCTS sees
         // unambiguous win/loss signals at known game-ends.
@@ -72,7 +75,10 @@ public:
         // expands those children first — so MCTS-5 ends up sampling
         // the meaningful moves rather than the noise moves.
         //
-        // Weights (rough Riftbound intuition):
+        // Weights (rough Riftbound intuition, overridable per matchup
+        // via `prior=<path>` — see agent_spec.h's `FamilyWeights` and
+        // `intentFamilyWeight`, which owns the family classification
+        // below so it stays unit-testable without OpenSpiel):
         //   Score / Conquer paths   high (winning condition)
         //   PlayCard                high (advances board)
         //   StandardMove → BF       high (toward scoring)
@@ -108,42 +114,10 @@ public:
             for (const auto& it : intents) {
                 if (openspiel::encodeAction(it, engine_state) !=
                     static_cast<int>(legal[i])) continue;
-                switch (it.type) {
-                    case IntentType::PlayCard:
-                    case IntentType::PlayReaction:
-                    case IntentType::PlayActionCard:
-                        w = 4.0; break;
-                    case IntentType::AssignCombatDamage:
-                        w = 4.0; break;
-                    case IntentType::StandardMove:
-                        // Move to a battlefield is meaningful; move to
-                        // base is usually retreating / shuffling.
-                        if (it.move_destination.has_value() &&
-                            std::holds_alternative<BattlefieldLocation>(*it.move_destination)) {
-                            w = 3.0;
-                        } else {
-                            w = 0.6;
-                        }
-                        break;
-                    case IntentType::ActivateAbility:
-                    case IntentType::ActivateReactionAbility:
-                    case IntentType::ActivateActionAbility:
-                        w = 2.5; break;
-                    case IntentType::MakeChoice:
-                        w = 1.5; break;
-                    case IntentType::MulliganDecision:
-                    case IntentType::ChooseBattlefield:
-                    case IntentType::PlayFirstDecision:
-                        w = 1.0; break;
-                    case IntentType::EndTurn:
-                    case IntentType::PassPriority:
-                    case IntentType::PassFocus:
-                        w = 0.3; break;
-                    case IntentType::Concede:
-                        w = 0.01; break;
-                    default:
-                        w = 1.0; break;
-                }
+                const bool moves_to_battlefield =
+                    it.move_destination.has_value() &&
+                    std::holds_alternative<BattlefieldLocation>(*it.move_destination);
+                w = intentFamilyWeight(it.type, moves_to_battlefield, family_);
                 break;
             }
             weights[i] = w;
@@ -162,6 +136,9 @@ public:
         }
         return out;
     }
+
+private:
+    FamilyWeights family_;
 };
 
 // `eval=score` (the default) — score difference and nothing else.
@@ -176,6 +153,9 @@ public:
 // is scaled by 1/victory_score so score stays dominant term-by-term.
 class RiftboundHeuristicEvaluator : public RiftboundEvaluatorBase {
 public:
+    explicit RiftboundHeuristicEvaluator(FamilyWeights family)
+        : RiftboundEvaluatorBase(std::move(family)) {}
+
     std::pair<double, double> evaluateEngineState(
         const GameState& s) const override {
         const auto& p1 = s.player(PlayerId::Player1);
@@ -194,21 +174,27 @@ public:
 // with the shared terminal short-circuit and Prior above.
 class RiftboundCorpusEvaluator : public RiftboundEvaluatorBase {
 public:
+    RiftboundCorpusEvaluator(FamilyWeights family, CorpusWeights weights)
+        : RiftboundEvaluatorBase(std::move(family)), weights_(std::move(weights)) {}
+
     std::pair<double, double> evaluateEngineState(
         const GameState& s) const override {
-        return corpusEvaluate(s);
+        return corpusEvaluate(s, weights_);
     }
+
+private:
+    CorpusWeights weights_;
 };
 
 std::shared_ptr<::open_spiel::algorithms::Evaluator> makeEvaluator(
-    EvaluatorKind kind) {
+    EvaluatorKind kind, const PriorConfig& prior) {
     switch (kind) {
         case EvaluatorKind::Corpus:
-            return std::make_shared<RiftboundCorpusEvaluator>();
+            return std::make_shared<RiftboundCorpusEvaluator>(prior.family, prior.evaluator);
         case EvaluatorKind::Score:
             break;
     }
-    return std::make_shared<RiftboundHeuristicEvaluator>();
+    return std::make_shared<RiftboundHeuristicEvaluator>(prior.family);
 }
 
 } // namespace
@@ -265,7 +251,7 @@ struct MctsAgent::Impl {
 
     Impl(std::string d1, std::string d2, std::string reg,
          uint64_t eng_seed, uint64_t mcts_seed, int sim_count,
-         EvaluatorKind eval_kind)
+         EvaluatorKind eval_kind, PriorConfig prior)
         : sims(sim_count), engine_seed(eng_seed) {
         const uint64_t engine_seed = eng_seed;  // alias for the body below
         // OpenSpiel's RiftboundGame uses this seed to seed the engine
@@ -293,7 +279,7 @@ struct MctsAgent::Impl {
         // six-term heuristic; the A/B in docs/superpowers/smoke/ is the
         // only calibration either weighting has.
         (void)mcts_seed;  // unused for heuristic; bot keeps its own seed below
-        auto evaluator = makeEvaluator(eval_kind);
+        auto evaluator = makeEvaluator(eval_kind, prior);
         bot = std::make_unique<::open_spiel::algorithms::MCTSBot>(
             *game, evaluator,
             /*uct_c=*/1.4,
@@ -320,11 +306,13 @@ MctsAgent::MctsAgent(std::string deck1_path,
                      uint64_t    engine_seed,
                      uint64_t    mcts_seed,
                      int         sims,
-                     EvaluatorKind eval)
+                     EvaluatorKind eval,
+                     PriorConfig prior)
     : impl_(std::make_unique<Impl>(std::move(deck1_path),
                                    std::move(deck2_path),
                                    std::move(registry_path),
-                                   engine_seed, mcts_seed, sims, eval)) {}
+                                   engine_seed, mcts_seed, sims, eval,
+                                   std::move(prior))) {}
 
 MctsAgent::~MctsAgent() = default;
 
@@ -426,7 +414,7 @@ struct IsMctsAgent::Impl {
 
     Impl(std::string d1, std::string d2, std::string reg,
          uint64_t eng_seed, uint64_t mcts_seed, int sim_count,
-         EvaluatorKind eval_kind)
+         EvaluatorKind eval_kind, PriorConfig prior)
         : sims(sim_count), engine_seed(eng_seed) {
         const uint64_t engine_seed = eng_seed;  // alias for the body below
         game = ::open_spiel::LoadGame(buildGameStr(d1, d2, reg, engine_seed));
@@ -436,7 +424,7 @@ struct IsMctsAgent::Impl {
                 "check deck/registry paths and OpenSpiel registration.");
         }
         (void)mcts_seed;  // unused for evaluator; bot still uses its own seed below
-        auto evaluator = makeEvaluator(eval_kind);
+        auto evaluator = makeEvaluator(eval_kind, prior);
         bot = std::make_unique<::open_spiel::algorithms::ISMCTSBot>(
             /*seed=*/static_cast<int>(mcts_seed ^ 0x3C3C3C3C),
             evaluator,
@@ -467,11 +455,13 @@ IsMctsAgent::IsMctsAgent(std::string deck1_path,
                          uint64_t    engine_seed,
                          uint64_t    mcts_seed,
                          int         sims,
-                         EvaluatorKind eval)
+                         EvaluatorKind eval,
+                         PriorConfig prior)
     : impl_(std::make_unique<Impl>(std::move(deck1_path),
                                    std::move(deck2_path),
                                    std::move(registry_path),
-                                   engine_seed, mcts_seed, sims, eval)) {}
+                                   engine_seed, mcts_seed, sims, eval,
+                                   std::move(prior))) {}
 
 IsMctsAgent::~IsMctsAgent() = default;
 

@@ -554,5 +554,56 @@ TEST(CorpusEvaluator, TwoOpposingBattlefieldsExactlyTieOnePointOfScore) {
     EXPECT_DOUBLE_EQ(corpusEvaluate(b.state()).first, 0.0);
 }
 
+// ── CorpusWeights override (L4 — prior injection) ───────────────────────────
+//
+// `corpusEvaluate(state, weights)` is a new overload; the single-arg form
+// above must keep behaving exactly as before (it forwards to
+// `CorpusWeights{}`, whose members default-initialize from the same
+// `kCorpusWeight*` constants the arithmetic used to reference directly).
+
+TEST(CorpusEvaluator, DefaultWeightsOverloadMatchesTheSingleArgOverload) {
+    CorpusStateBuilder b;
+    b.setScore(P1, 3);
+    b.addBattlefield(P1);
+    b.addUnit(P2);
+    auto one_arg = corpusEvaluate(b.state());
+    auto two_arg = corpusEvaluate(b.state(), CorpusWeights{});
+    EXPECT_DOUBLE_EQ(one_arg.first, two_arg.first);
+    EXPECT_DOUBLE_EQ(one_arg.second, two_arg.second);
+}
+
+TEST(CorpusEvaluator, OverriddenBattlefieldWeightChangesTheValueAsFormulaPredicts) {
+    CorpusStateBuilder b;
+    b.addBattlefield(P1);
+    CorpusWeights w;
+    w.battlefield = 2.0;  // was 0.5
+    auto v = corpusEvaluate(b.state(), w);
+    EXPECT_DOUBLE_EQ(v.first, 2.0 / kV);
+    EXPECT_DOUBLE_EQ(v.second, -2.0 / kV);
+}
+
+TEST(CorpusEvaluator, OverriddenScoreWeightChangesTheScoreTerm) {
+    CorpusStateBuilder b;
+    b.setScore(P1, 4);
+    CorpusWeights w;
+    w.score = 2.0;  // was 1.0
+    auto v = corpusEvaluate(b.state(), w);
+    EXPECT_DOUBLE_EQ(v.first, 2.0 * (4.0 / kV));
+}
+
+TEST(CorpusEvaluator, LeavingOneWeightAtDefaultDoesNotDisturbTheOthers) {
+    // A partial override (only `unit` changed) must not perturb the
+    // battlefield term computed alongside it.
+    CorpusStateBuilder b;
+    b.addBattlefield(P1);
+    b.addUnit(P1);
+    CorpusWeights w;
+    w.unit = 1.0;  // was 0.25
+    auto v = corpusEvaluate(b.state(), w);
+    const double expected_bf = 0.5 / kV;     // unchanged default
+    const double expected_unit = 1.0 / kV;   // overridden weight, 1 unit
+    EXPECT_DOUBLE_EQ(v.first, expected_bf + expected_unit);
+}
+
 }  // namespace
 }  // namespace riftbound
