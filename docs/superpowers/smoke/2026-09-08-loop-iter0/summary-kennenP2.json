@@ -1,0 +1,5765 @@
+{
+  "schema": 1,
+  "games_processed": 200,
+  "skipped_truncated": 0,
+  "skipped_unparseable": 0,
+  "mean_turns_overall": 15.805,
+  "win_rates": {
+    "kennen_tyler": {
+      "P2": {
+        "wins": 90,
+        "games": 200,
+        "win_rate_pct": 45.0,
+        "ci95_low_pct": 38.3,
+        "ci95_high_pct": 51.9
+      }
+    },
+    "rengar_test": {
+      "P1": {
+        "wins": 110,
+        "games": 200,
+        "win_rate_pct": 55.0,
+        "ci95_low_pct": 48.1,
+        "ci95_high_pct": 61.7
+      }
+    }
+  },
+  "tempo": {
+    "rengar_test::P1": {
+      "deck": "rengar_test",
+      "seat": "P1",
+      "length": 21,
+      "mean_score_by_turn": [
+        0.0,
+        0.18,
+        0.47,
+        0.795,
+        1.12,
+        1.525,
+        1.96,
+        2.41,
+        2.875,
+        3.398,
+        3.943,
+        4.465,
+        5.039,
+        5.48,
+        5.814,
+        6.074,
+        6.28,
+        6.655,
+        6.875,
+        6.75,
+        7.0
+      ],
+      "mean_margin_by_turn": [
+        0.0,
+        -0.065,
+        -0.105,
+        -0.175,
+        -0.27,
+        -0.315,
+        -0.33,
+        -0.32,
+        -0.35,
+        -0.214,
+        -0.104,
+        -0.005,
+        0.123,
+        0.393,
+        0.434,
+        0.506,
+        0.58,
+        0.621,
+        0.688,
+        0.75,
+        0.0
+      ]
+    },
+    "kennen_tyler::P2": {
+      "deck": "kennen_tyler",
+      "seat": "P2",
+      "length": 21,
+      "mean_score_by_turn": [
+        0.0,
+        0.245,
+        0.575,
+        0.97,
+        1.39,
+        1.84,
+        2.29,
+        2.73,
+        3.225,
+        3.612,
+        4.047,
+        4.471,
+        4.916,
+        5.087,
+        5.381,
+        5.568,
+        5.7,
+        6.034,
+        6.188,
+        6.0,
+        7.0
+      ],
+      "mean_margin_by_turn": [
+        0.0,
+        0.065,
+        0.105,
+        0.175,
+        0.27,
+        0.315,
+        0.33,
+        0.32,
+        0.35,
+        0.214,
+        0.104,
+        0.005,
+        -0.123,
+        -0.393,
+        -0.434,
+        -0.506,
+        -0.58,
+        -0.621,
+        -0.688,
+        -0.75,
+        0.0
+      ]
+    }
+  },
+  "family_mix": {
+    "kennen_tyler": {
+      "Mulligan": {
+        "setup": 200
+      },
+      "MainPhase": {
+        "pass": 16511,
+        "play": 3591,
+        "choice": 10900,
+        "move_to_battlefield": 2226,
+        "activate": 2681,
+        "combat_damage": 1352,
+        "move_to_base": 585
+      },
+      "ScoringStep": {
+        "activate": 83,
+        "pass": 202,
+        "choice": 59,
+        "play": 9
+      }
+    },
+    "rengar_test": {
+      "Mulligan": {
+        "setup": 200
+      },
+      "MainPhase": {
+        "play": 2613,
+        "choice": 10165,
+        "pass": 16435,
+        "move_to_battlefield": 2336,
+        "combat_damage": 1352,
+        "move_to_base": 1218,
+        "activate": 690
+      },
+      "ScoringStep": {
+        "pass": 201,
+        "play": 1,
+        "choice": 6
+      }
+    }
+  },
+  "flow_plays": {
+    "printed": {
+      "kennen_tyler": 457
+    },
+    "granted": {
+      "kennen_tyler": 14
+    }
+  },
+  "tomb_restricted": {
+    "kennen_tyler": 29,
+    "rengar_test": 23
+  },
+  "conquers": {
+    "rengar_test": 870,
+    "kennen_tyler": 882
+  },
+  "reactions_in_closed_state": {
+    "rengar_test": 318,
+    "kennen_tyler": 210
+  },
+  "burn_empower": null,
+  "per_game": [
+    {
+      "file": "game_0_seed_3000.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_100_seed_3100.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {},
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_101_seed_3101.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 10,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_102_seed_3102.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_103_seed_3103.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 2,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_104_seed_3104.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_105_seed_3105.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_106_seed_3106.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_107_seed_3107.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_108_seed_3108.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_109_seed_3109.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_10_seed_3010.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 2
+      },
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_110_seed_3110.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 1,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_111_seed_3111.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_112_seed_3112.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_113_seed_3113.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_114_seed_3114.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_115_seed_3115.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_116_seed_3116.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 21,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_117_seed_3117.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_118_seed_3118.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_119_seed_3119.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_11_seed_3011.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 2
+      },
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_120_seed_3120.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_121_seed_3121.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 11,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_122_seed_3122.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_123_seed_3123.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 10,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 2
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_124_seed_3124.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_125_seed_3125.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_126_seed_3126.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 1,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_127_seed_3127.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_128_seed_3128.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 2,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_129_seed_3129.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_12_seed_3012.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_130_seed_3130.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 2,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_131_seed_3131.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_132_seed_3132.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_133_seed_3133.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_134_seed_3134.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_135_seed_3135.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_136_seed_3136.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_137_seed_3137.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 2,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_138_seed_3138.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_139_seed_3139.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_13_seed_3013.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 4,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_140_seed_3140.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_141_seed_3141.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_142_seed_3142.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_143_seed_3143.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_144_seed_3144.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_145_seed_3145.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_146_seed_3146.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_147_seed_3147.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_148_seed_3148.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_149_seed_3149.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_14_seed_3014.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_150_seed_3150.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_151_seed_3151.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_152_seed_3152.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_153_seed_3153.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_154_seed_3154.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_155_seed_3155.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_156_seed_3156.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_157_seed_3157.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_158_seed_3158.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 11,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_159_seed_3159.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_15_seed_3015.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_160_seed_3160.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_161_seed_3161.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_162_seed_3162.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_163_seed_3163.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_164_seed_3164.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_165_seed_3165.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 3
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_166_seed_3166.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_167_seed_3167.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_168_seed_3168.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 21,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_169_seed_3169.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_16_seed_3016.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_170_seed_3170.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 2,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_171_seed_3171.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_172_seed_3172.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_173_seed_3173.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_174_seed_3174.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 11,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 2,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_175_seed_3175.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 10,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_176_seed_3176.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 2
+      },
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_177_seed_3177.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_178_seed_3178.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_179_seed_3179.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_17_seed_3017.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_180_seed_3180.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 2
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_181_seed_3181.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_182_seed_3182.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_183_seed_3183.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_184_seed_3184.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_185_seed_3185.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_186_seed_3186.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_187_seed_3187.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_188_seed_3188.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_189_seed_3189.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_18_seed_3018.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_190_seed_3190.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_191_seed_3191.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_192_seed_3192.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {},
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 2,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_193_seed_3193.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_194_seed_3194.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_195_seed_3195.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_196_seed_3196.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_197_seed_3197.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 10,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_198_seed_3198.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_199_seed_3199.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 3
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_19_seed_3019.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_1_seed_3001.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_20_seed_3020.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_21_seed_3021.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_22_seed_3022.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_23_seed_3023.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_24_seed_3024.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_25_seed_3025.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_26_seed_3026.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 2
+      },
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_27_seed_3027.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_28_seed_3028.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_29_seed_3029.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 5
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_2_seed_3002.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_30_seed_3030.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 2
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_31_seed_3031.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_32_seed_3032.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_33_seed_3033.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_34_seed_3034.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_35_seed_3035.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_36_seed_3036.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {},
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_37_seed_3037.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 10,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_38_seed_3038.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_39_seed_3039.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_3_seed_3003.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_40_seed_3040.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_41_seed_3041.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_42_seed_3042.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_43_seed_3043.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_44_seed_3044.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 2,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_45_seed_3045.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_46_seed_3046.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_47_seed_3047.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_48_seed_3048.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 7
+      }
+    },
+    {
+      "file": "game_49_seed_3049.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_4_seed_3004.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_50_seed_3050.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_51_seed_3051.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_52_seed_3052.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_53_seed_3053.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_54_seed_3054.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_55_seed_3055.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_56_seed_3056.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_57_seed_3057.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 7
+      }
+    },
+    {
+      "file": "game_58_seed_3058.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_59_seed_3059.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_5_seed_3005.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_60_seed_3060.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_61_seed_3061.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_62_seed_3062.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_63_seed_3063.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_64_seed_3064.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_65_seed_3065.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 2,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_66_seed_3066.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_67_seed_3067.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_68_seed_3068.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 1
+      }
+    },
+    {
+      "file": "game_69_seed_3069.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 3,
+        "rengar_test": 4
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_6_seed_3006.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 21,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_70_seed_3070.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_71_seed_3071.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_72_seed_3072.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_73_seed_3073.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_74_seed_3074.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 6,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      }
+    },
+    {
+      "file": "game_75_seed_3075.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_76_seed_3076.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_77_seed_3077.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 3
+      },
+      "conquers": {
+        "kennen_tyler": 1,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_78_seed_3078.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {},
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {
+        "kennen_tyler": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_79_seed_3079.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 12,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 2
+      }
+    },
+    {
+      "file": "game_7_seed_3007.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {},
+      "conquers": {
+        "rengar_test": 7,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_80_seed_3080.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 3
+      }
+    },
+    {
+      "file": "game_81_seed_3081.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_82_seed_3082.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 2
+      },
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_83_seed_3083.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_84_seed_3084.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 4,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "rengar_test": 5,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_85_seed_3085.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_86_seed_3086.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 18,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_87_seed_3087.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {},
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_88_seed_3088.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 3,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_89_seed_3089.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 4,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_8_seed_3008.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 13,
+      "flow_printed": {},
+      "flow_granted": {
+        "kennen_tyler": 1
+      },
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 2
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 2
+      }
+    },
+    {
+      "file": "game_90_seed_3090.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 19,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 3,
+        "kennen_tyler": 5
+      }
+    },
+    {
+      "file": "game_91_seed_3091.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 20,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 2
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 6
+      }
+    },
+    {
+      "file": "game_92_seed_3092.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 22,
+      "flow_printed": {
+        "kennen_tyler": 5
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "rengar_test": 6,
+        "kennen_tyler": 4
+      }
+    },
+    {
+      "file": "game_93_seed_3093.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 16,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 7,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_94_seed_3094.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 3
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 1,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_95_seed_3095.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 15,
+      "flow_printed": {
+        "kennen_tyler": 1
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_96_seed_3096.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 4
+      }
+    },
+    {
+      "file": "game_97_seed_3097.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {},
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "rengar_test": 3,
+        "kennen_tyler": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 6
+      }
+    },
+    {
+      "file": "game_98_seed_3098.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {
+        "rengar_test": 1
+      },
+      "reactions_closed": {
+        "rengar_test": 2,
+        "kennen_tyler": 2
+      },
+      "conquers": {
+        "kennen_tyler": 6,
+        "rengar_test": 5
+      }
+    },
+    {
+      "file": "game_99_seed_3099.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 14,
+      "flow_printed": {
+        "kennen_tyler": 2
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 1,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 3
+      }
+    },
+    {
+      "file": "game_9_seed_3009.json",
+      "decks": {
+        "P1": "rengar_test",
+        "P2": "kennen_tyler"
+      },
+      "turns": 17,
+      "flow_printed": {
+        "kennen_tyler": 4
+      },
+      "flow_granted": {},
+      "tomb_restricted": {},
+      "reactions_closed": {
+        "kennen_tyler": 2,
+        "rengar_test": 1
+      },
+      "conquers": {
+        "kennen_tyler": 5,
+        "rengar_test": 3
+      }
+    }
+  ],
+  "mistakes": [
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 237,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Closed scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 239,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Closed scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 240,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": "Ferrous Forerunner",
+        "destination": {
+          "player": "P1",
+          "type": "base"
+        },
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 241,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 242,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 243,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 244,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 245,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 246,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 247,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 248,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Closed scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/4m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 250,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": "Kai'Sa, Survivor",
+        "destination": {
+          "player": "P1",
+          "type": "base"
+        },
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 251,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 252,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 253,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 254,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 255,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Closed scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/5m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 257,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:1u/6m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": {
+          "id": 0,
+          "type": "battlefield"
+        },
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "StandardMove"
+      }
+    },
+    {
+      "game": "game_110_seed_3110.json",
+      "deck": "rengar_test",
+      "idx": 258,
+      "turn": 12,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        4,
+        4
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": -3,
+      "delta": 3,
+      "next_turn": 14,
+      "board_summary": "turn 12 MainPhase/Open scores P1=4 P2=4 | Emperor's Dais[P1] P1:2u/9m P2:0u/0m; Minefield[P2] P1:0u/0m P2:2u/14m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "EndTurn"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 107,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Open scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": "Treasure Hunter",
+        "destination": {
+          "player": "P2",
+          "type": "base"
+        },
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 108,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Open scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 109,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Open scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 110,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Open scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": "Lightning Rush",
+        "destination": null,
+        "flow_source": "Printed",
+        "restricted_bf": null,
+        "source_zone": "Trash",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 111,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Closed scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "ActivateReactionAbility"
+      }
+    },
+    {
+      "game": "game_137_seed_3137.json",
+      "deck": "kennen_tyler",
+      "idx": 112,
+      "turn": 7,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        2
+      ],
+      "margin_at_decision": 1,
+      "margin_at_turn_end": -2,
+      "delta": 3,
+      "next_turn": 9,
+      "board_summary": "turn 7 MainPhase/Closed scores P1=1 P2=2 | Star Spring[None] P1:1u/4m P2:0u/0m; Sandswept Tomb[P1] P1:1u/6m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    }
+  ],
+  "swings": [
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 147,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": "Star-Crossed",
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 148,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 149,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 150,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 151,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 152,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 154,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 155,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 156,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": "Traveling Merchant",
+        "destination": {
+          "player": "P2",
+          "type": "base"
+        },
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 157,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 158,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 159,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": "Ride the Wind",
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 160,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 161,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 162,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 163,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 165,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 166,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 168,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": "Ride the Wind",
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PlayCard"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 169,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 170,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 171,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Open",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Open scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "MakeChoice"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 172,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "ActivateReactionAbility"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 173,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    },
+    {
+      "game": "game_104_seed_3104.json",
+      "deck": "kennen_tyler",
+      "idx": 175,
+      "turn": 9,
+      "phase": {
+        "ns_state": "Neutral",
+        "oc_state": "Closed",
+        "phase": "MainPhase"
+      },
+      "scores": [
+        1,
+        1
+      ],
+      "margin_at_decision": 0,
+      "margin_at_turn_end": 4,
+      "delta": 4,
+      "next_turn": 11,
+      "board_summary": "turn 9 MainPhase/Closed scores P1=1 P2=1 | Treasure Hoard[None] P1:0u/0m P2:0u/0m; Sandswept Tomb[None] P1:0u/0m P2:0u/0m",
+      "chosen": {
+        "card": null,
+        "destination": null,
+        "flow_source": "None",
+        "restricted_bf": null,
+        "source_zone": "Hand",
+        "type": "PassPriority"
+      }
+    }
+  ],
+  "validity": {
+    "frozen_bursts": [],
+    "games_with_bursts": 0,
+    "max_run": 2,
+    "min_run_flagged": 10
+  },
+  "notes": [
+    "The mistake/swing heuristic is CRUDE BY DESIGN: it is a score-margin swing detector meant to point a reader at decisions worth reading, not a grading of play quality.",
+    "Turn ownership is inferred (first non-Closed decision's actor per turn), not read from an explicit field.",
+    "Burns/empowers OMITTED: no decision in this batch carried a burn/empower marker in the assumed schema; nothing to count."
+  ]
+}
