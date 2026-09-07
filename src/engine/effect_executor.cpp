@@ -1165,6 +1165,13 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
     if (!state_.objectExists(card)) return;
     auto& obj = state_.getObject(card);
 
+    // Play source is derived from the card's zone (and hidden status)
+    // BEFORE the zone is overwritten below (Kennen spec §2/addendum #2).
+    // EffectExecutor can't call back into GameEngine::playSourceFor, so
+    // this mirrors that mapping via the shared playSourceForZone helper
+    // (core/intent.h) — defined once, consulted from both places.
+    Intent::PlaySource play_source = playSourceForZone(obj.zone, obj.is_hidden);
+
     // Landing zone: caller-supplied (CR 355.2.a — controller picks base
     // or a battlefield they control) or, by default, the controller's
     // base for back-compat. The card's onPlay hook below may override
@@ -1216,7 +1223,7 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
     LocationId final_loc = obj.location.value_or(BaseLocation{player});
 
     events_.emit(CardPlayedEvent{card, player, obj.card_type,
-        ps.cards_played_this_turn});
+        ps.cards_played_this_turn, /*energy_spent=*/0, play_source});
     events_.emit(EnteredBoardEvent{card, player, obj.card_type,
         final_loc, true});
 }

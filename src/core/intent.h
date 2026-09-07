@@ -223,4 +223,26 @@ struct Intent {
     }
 };
 
+// Derives a CardPlayedEvent's play_source from the object's ZONE (and
+// facedown-hidden status) at the moment it is played — never from the
+// executing intent (Kennen/Heart of the Tempest spec §2, addendum #2).
+// Shared by GameEngine::playSourceFor (game_engine.cpp, the four normal
+// emit sites) and EffectExecutor::playIgnoringCost (effect_executor.cpp),
+// which cannot call back into GameEngine and so mirrors the mapping
+// locally against the pre-mutation zone/is_hidden it captures itself.
+// Defined once, here, so both stay in lock-step. No Deck value: no
+// in-scope card is played from the top of the deck (Nocturne banishes
+// itself first and plays from Banishment).
+inline Intent::PlaySource playSourceForZone(ZoneType zone, bool is_hidden) {
+    if (is_hidden) return Intent::PlaySource::Hidden;
+    switch (zone) {
+        case ZoneType::Trash:        return Intent::PlaySource::Trash;
+        case ZoneType::Banishment:   return Intent::PlaySource::Banishment;
+        case ZoneType::ChampionZone: return Intent::PlaySource::ChampionZone;
+        case ZoneType::Chain:        return Intent::PlaySource::ChainZone;
+        case ZoneType::Hand:
+        default:                    return Intent::PlaySource::Hand;
+    }
+}
+
 } // namespace riftbound

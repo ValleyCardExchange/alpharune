@@ -1266,6 +1266,11 @@ void GameEngine::executePlayCard(const Intent& intent) {
                      ", " + toString(card.card_type) + ", cost=" +
                      std::to_string(trace_cost) + "E)");
 
+    // Play source is derived from the card's zone BEFORE it's removed
+    // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
+    // ChampionZone for a champion play.
+    Intent::PlaySource play_source = playSourceFor(card);
+
     // Remove from current zone (hand or champion zone) (CR 354: step 1)
     if (card.zone == ZoneType::Hand) {
         auto it = std::find(ps.hand.begin(), ps.hand.end(), intent.card);
@@ -1360,7 +1365,7 @@ void GameEngine::executePlayCard(const Intent& intent) {
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, energy_spent});
+        card.card_type, ps.cards_played_this_turn, energy_spent, play_source});
 
     // Store the play location on the game object so resolvePermanent can use it.
     // Permanents choose location during finalization (CR 355.2.a).
@@ -1399,6 +1404,11 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         events_.logTrace("SPELL: " + card.name + " (id=" + std::to_string(intent.card) +
                          ") targets=[" + tgt_str + "]");
     }
+
+    // Play source is derived from the card's zone BEFORE it's removed
+    // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
+    // Trash for a trash-replay (Fizz / Death from Below style plays).
+    Intent::PlaySource play_source = playSourceFor(card);
 
     // Remove from the source zone.
     if (card.zone == ZoneType::Hand) {
@@ -1532,7 +1542,7 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         }
     }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, total_energy_spent});
+        card.card_type, ps.cards_played_this_turn, total_energy_spent, play_source});
 
     // Add spell to chain with targets. Carry energy_spent and repeats_paid
     // onto the chain item — ChainManager re-resolves the spell `repeats_paid`
@@ -2018,6 +2028,11 @@ void GameEngine::executePlayFromHidden(const Intent& intent) {
     auto it = std::find(bf.facedown.begin(), bf.facedown.end(), intent.card);
     if (it != bf.facedown.end()) bf.facedown.erase(it);
 
+    // Play source captured BEFORE is_hidden is cleared below (Kennen spec
+    // §2/addendum #2) — playSourceFor keys off is_hidden for a facedown
+    // reveal, so it must run while the card is still marked hidden.
+    Intent::PlaySource play_source = playSourceFor(card);
+
     card.is_hidden = false;
     card.hidden_at = kInvalidId;
 
@@ -2032,14 +2047,16 @@ void GameEngine::executePlayFromHidden(const Intent& intent) {
         ps.cards_played_this_turn++;
         // Hidden play is "ignoring its base cost" (CR 811) — energy_spent = 0.
         events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0});
+            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0,
+            play_source});
         chain_manager_->addPermanent(intent.card, intent.player);
         runChain();
     } else if (card.isSpell()) {
         auto& ps = state_.player(intent.player);
         ps.cards_played_this_turn++;
         events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0});
+            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0,
+            play_source});
         chain_manager_->addSpell(intent.card, intent.player, intent.targets);
         runChain();
     }
@@ -2870,8 +2887,8 @@ void GameEngine::generateFlowPlayActions(PlayerId /*player*/, bool /*action_ok*/
                                           std::vector<Intent>& /*actions*/) const {
 }
 
-Intent::PlaySource GameEngine::playSourceFor(const GameObject& /*obj*/) const {
-    return Intent::PlaySource::Hand;
+Intent::PlaySource GameEngine::playSourceFor(const GameObject& obj) const {
+    return playSourceForZone(obj.zone, obj.is_hidden);
 }
 
 void GameEngine::generateTrashReplayActions(PlayerId player, bool action_ok,
