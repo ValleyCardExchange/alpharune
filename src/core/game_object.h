@@ -36,6 +36,11 @@ struct GameObject {
     // ── State ──
     bool is_exhausted = false;
     bool is_stunned = false;
+    // Empowered (CR 441.1.a) — a binary status, not a counter. Set by
+    // EffectExecutor::empowerObject, cleared by disempowerObject. Survives
+    // turn boundaries; cleared in the executor's board-exit paths (kill,
+    // bounce, banish, recycle-from-board, combat death).
+    bool is_empowered = false;
     bool is_hidden = false;             // facedown at a battlefield
     BattlefieldId hidden_at = kInvalidId; // which BF it's hidden at
     int hidden_on_turn = -1;            // turn it was hidden (gains Reaction next turn)
@@ -122,6 +127,21 @@ struct GameObject {
     // (which only holds ints). Survives across turns; reset by the owning
     // Card subclass if needed.
     std::unordered_map<std::string, std::string> string_state;
+
+    // ── Granted Flow (CR 829; Kennen, Storm of Shuriken) ──
+    // "Until end of turn, a spell in your trash gains [Flow] <cost>."
+    // Expiry is EVALUATED, not scheduled: the grant is live iff
+    // `valid_on_turn == state.turn.turn_number`. A printed Flow cost and a
+    // granted one can both be live — GameEngine::liveFlowCosts returns both
+    // and the controller chooses (CR 829.1.c.3).
+    struct GrantedFlow {
+        int energy = 0;
+        int power = 0;
+        Domain power_domain = Domain::Fury;
+        bool any_domain = false;      // [A] — power may be any single domain
+        int valid_on_turn = -1;       // turn number the grant was made on
+    };
+    std::optional<GrantedFlow> granted_flow;
 
     // ── Damage-modifying turn-scoped flags ──
     // Lotus Trap and similar cards set `damage_doubled_this_turn` on a

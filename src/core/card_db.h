@@ -42,6 +42,13 @@ struct CardDef {
     int shield_value = 0;
     int deflect_value = 0;
 
+    // Printed Flow cost (CR 829) — only meaningful when `keywords` has
+    // Keyword::Flow. Read by the default Card::flowCost(); the power domain is
+    // the card's first entry in `domains` unless `flow_any_domain` ([A]).
+    int flow_energy = 0;
+    int flow_power = 0;
+    bool flow_any_domain = false;
+
     std::string ability_text;
     std::string effect_text;
 

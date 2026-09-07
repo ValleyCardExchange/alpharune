@@ -790,6 +790,11 @@ void register_card_784(CardRegistry&);
 void register_card_785(CardRegistry&);
 void register_card_786(CardRegistry&);
 void register_card_787(CardRegistry&);
+void register_card_788(CardRegistry&);
+void register_card_789(CardRegistry&);
+void register_card_790(CardRegistry&);
+void register_card_791(CardRegistry&);
+void register_card_792(CardRegistry&);
 
 void registerAllCards(CardRegistry& registry) {
     register_card_1(registry);
@@ -1579,6 +1584,11 @@ void registerAllCards(CardRegistry& registry) {
     register_card_785(registry);
     register_card_786(registry);
     register_card_787(registry);
+    register_card_788(registry);
+    register_card_789(registry);
+    register_card_790(registry);
+    register_card_791(registry);
+    register_card_792(registry);
 }
 
 } // namespace riftbound

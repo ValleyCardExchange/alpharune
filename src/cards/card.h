@@ -520,6 +520,30 @@ public:
     virtual AltPlayCost alternativePlayCost(const GameState& /*state*/,
                                             PlayerId /*player*/) const { return {}; }
 
+    // ── Flow cost (CR 829) ──
+    /// "[Flow] <cost>" — you may play this from your trash for <cost>, and it
+    /// is banished as it leaves the chain. The default reads the printed cost
+    /// off the def and is valid only when the def carries Keyword::Flow;
+    /// `power_domain` is the card's first domain when it has one.
+    struct FlowCost {
+        bool valid = false;
+        int energy = 0;
+        int power = 0;
+        Domain power_domain = Domain::Fury;
+        bool any_domain = false;        // power may be any domain ([A])
+    };
+    virtual FlowCost flowCost() const {
+        const CardDef& d = def();
+        if (!d.keywords.has(Keyword::Flow)) return {};
+        FlowCost fc;
+        fc.valid = true;
+        fc.energy = d.flow_energy;
+        fc.power = d.flow_power;
+        fc.any_domain = d.flow_any_domain;
+        if (!d.domains.empty()) fc.power_domain = d.domains.front();
+        return fc;
+    }
+
     /// LeBlanc, Everywhere at Once: "your [Temporary] effects at my battlefield
     /// don't trigger." When true, TriggerManager suppresses triggers fired by a
     /// friendly [Temporary] unit sharing this card's battlefield + controller.

@@ -42,6 +42,40 @@ GameEngine::~GameEngine() {
 // Game lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Construct ChainManager / EffectExecutor / TriggerManager against the
+// current `state_` and wire their cross-references. Called once per game
+// from both runGame (fresh state) and resumeFromSnapshot (state already
+// substituted from a snapshot) — previously duplicated verbatim in both;
+// factored out so there is exactly one place that assembles this wiring.
+void GameEngine::initSubsystems() {
+    chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
+    chain_manager_->setAffordCheck(
+        [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
+    chain_manager_->setPayCost(
+        [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
+    // Closed-State [Reaction] plays run through the SAME two executors every
+    // other play uses (see ChainManager::setPlaySpell). Without these the
+    // chain's own thin copies pay the printed cost for a [Flow] play, leave
+    // the card in the trash and drop the Sandswept Tomb restriction on the
+    // floor — and, for a permanent, pay full cost and then dispose the card
+    // into the trash instead of putting it on the board.
+    chain_manager_->setPlaySpell(
+        [this](const Intent& i) { executePlaySpell(i); });
+    chain_manager_->setPlayCard(
+        [this](const Intent& i) { executePlayCard(i); });
+    effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
+    effect_executor_->setRng(&rng_);
+    effect_executor_->setAgentQuery(
+        [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
+            return queryAgentForChain(p, actions);
+        });
+    chain_manager_->setEffectExecutor(effect_executor_.get());
+    trigger_manager_ = std::make_unique<TriggerManager>(
+        state_, events_, card_db_, *chain_manager_, card_registry_);
+    trigger_manager_->setEffectExecutor(effect_executor_.get());
+    trigger_manager_->subscribe();
+}
+
 GameResult GameEngine::runGame(
     const DeckSubmission& deck1,
     const DeckSubmission& deck2,
@@ -57,22 +91,7 @@ GameResult GameEngine::runGame(
     state_.mode = ModeOfPlay{};
 
     // Initialize Phase 2 subsystems
-    chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
-    chain_manager_->setAffordCheck(
-        [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
-    chain_manager_->setPayCost(
-        [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
-    effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
-    effect_executor_->setRng(&rng_);
-    effect_executor_->setAgentQuery(
-        [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
-            return queryAgentForChain(p, actions);
-        });
-    chain_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_ = std::make_unique<TriggerManager>(
-        state_, events_, card_db_, *chain_manager_, card_registry_);
-    trigger_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_->subscribe();
+    initSubsystems();
 
     setupGame(deck1, deck2);
     drawOpeningHands();
@@ -173,22 +192,7 @@ StepResult GameEngine::resumeFromSnapshot(GameState snapshot_state,
     // Initialise subsystems (parallel to runGame's first block). These
     // hold references into `state_` and `events_`, which are now
     // populated from the snapshot.
-    chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
-    chain_manager_->setAffordCheck(
-        [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
-    chain_manager_->setPayCost(
-        [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
-    effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
-    effect_executor_->setRng(&rng_);
-    effect_executor_->setAgentQuery(
-        [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
-            return queryAgentForChain(p, actions);
-        });
-    chain_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_ = std::make_unique<TriggerManager>(
-        state_, events_, card_db_, *chain_manager_, card_registry_);
-    trigger_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_->subscribe();
+    initSubsystems();
 
     step_driver_ = std::make_unique<StepDriver>();
     step_result_ = GameResult{};
@@ -850,23 +854,61 @@ GameEngine::MainPhaseAdvance GameEngine::advanceMainPhase(int& action_count) {
 
     // If in showdown, run it. Sub-calls still use the recursive path
     // until C-1 commit 6 converts the chain / combat subsystems.
-    for (auto& bf : state_.battlefields) {
-        if (bf.showdown_staged && !bf.showdown_in_progress &&
-            !bf.combat_staged) {
-            runShowdown(bf.id);
-            if (state_.game_over) {
-                adv.kind = MainPhaseAdvance::Kind::Done;
-                return adv;
-            }
-            bf.showdown_staged = false;
+    //
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): the body
+    // of this loop resolves whole showdowns and combats, and card
+    // resolution can APPEND a battlefield (Baron Nashor spawns the Baron
+    // Pit via EffectExecutor::addBattlefieldToken). `battlefields` is a
+    // deque so existing elements never move, but the range-for's own
+    // iterator is still not something to bet a game on across arbitrary
+    // card resolution — and a future container change must not silently
+    // re-open the use-after-free this cost us. So: snapshot the ids up
+    // front, and re-fetch each battlefield by id immediately before every
+    // read and every write. Nothing here holds a reference across a
+    // runShowdown / runCombat call. Battlefields appended DURING this
+    // pass are handled on the next call into advanceMainPhase, which is
+    // the same behaviour the range-for had.
+    std::vector<BattlefieldId> staged_ids;
+    staged_ids.reserve(state_.battlefields.size());
+    for (const auto& bf : state_.battlefields) staged_ids.push_back(bf.id);
+
+    // Nothing removes battlefields today, but re-fetch defensively rather
+    // than throwing out of the main-phase driver if that ever changes.
+    auto find_bf = [this](BattlefieldId id) -> BattlefieldState* {
+        for (auto& b : state_.battlefields) {
+            if (b.id == id) return &b;
         }
-        if (bf.combat_staged && !bf.combat_in_progress) {
-            runCombat(bf.id);
+        return nullptr;
+    };
+
+    for (BattlefieldId staged_id : staged_ids) {
+        bool want_showdown = false;
+        if (const BattlefieldState* bf = find_bf(staged_id)) {
+            want_showdown = bf->showdown_staged && !bf->showdown_in_progress &&
+                            !bf->combat_staged;
+        }
+        if (want_showdown) {
+            runShowdown(staged_id);
             if (state_.game_over) {
                 adv.kind = MainPhaseAdvance::Kind::Done;
                 return adv;
             }
-            bf.combat_staged = false;
+            if (BattlefieldState* bf = find_bf(staged_id))
+                bf->showdown_staged = false;
+        }
+
+        bool want_combat = false;
+        if (const BattlefieldState* bf = find_bf(staged_id)) {
+            want_combat = bf->combat_staged && !bf->combat_in_progress;
+        }
+        if (want_combat) {
+            runCombat(staged_id);
+            if (state_.game_over) {
+                adv.kind = MainPhaseAdvance::Kind::Done;
+                return adv;
+            }
+            if (BattlefieldState* bf = find_bf(staged_id))
+                bf->combat_staged = false;
         }
     }
 
@@ -1114,7 +1156,39 @@ void GameEngine::executeIntent(const Intent& intent) {
 
     switch (intent.type) {
         case IntentType::PlayCard:
-        case IntentType::PlayActionCard: {
+        case IntentType::PlayActionCard:
+        // CR 806 / 813 / 819 — a [Reaction] play dispatched here.
+        //
+        // Two generators emit PlayReaction, answered in two different places
+        // that both end in the SAME two executors:
+        //
+        //   • CLOSED STATE (generateClosedStateActions) →
+        //     ChainManager::stepExecuteAndPass, which never calls
+        //     executeIntent. It picks by card type and calls back out:
+        //     spells through `play_spell_` (ChainManager::setPlaySpell →
+        //     executePlaySpell), units and gear through `play_card_`
+        //     (setPlayCard → executePlayCard). Its one local play is a
+        //     SPELLS-ONLY fallback for a bare ChainManager with no executor
+        //     injected — unit tests, never a real game.
+        //   • SHOWDOWN (generateShowdownActions — the reaction-to-attack
+        //     block that offers Rengar, Pouncing) → resolveShowdownDecision,
+        //     which dispatches through HERE.
+        //
+        // Without this case the switch fell to `default: break` and the
+        // showdown play was silently discarded — the card stayed in hand,
+        // nothing was paid, and focus passed as though it had been played.
+        // The two paths stay disjoint, so this cannot double-execute a
+        // closed-state play: executeIntent's only production callers are
+        // resolveMainPhaseDecision and resolveShowdownDecision, and the
+        // ChainManager reaches neither.
+        //
+        // Routing is by card type, into the SAME executors every other play
+        // uses: spells to executePlaySpell (chain, [Flow], Sandswept Tomb,
+        // facedown reveal); units and gear to executePlayCard, which honours
+        // intent.play_location so a Pouncing / Ambush unit lands at its
+        // battlefield, and carries intent.targets onto the chain item, which
+        // is what makes Quick-Draw's auto-attach in resolvePermanent fire.
+        case IntentType::PlayReaction: {
             auto& card = state_.getObject(intent.card);
             if (card.isSpell()) {
                 executePlaySpell(intent);
@@ -1176,9 +1250,29 @@ void GameEngine::executeIntent(const Intent& intent) {
                 int red = cost_card->activationCostReduction(state_, intent.player, idx);
                 if (red > 0) act_cost.energy = std::max(0, act_cost.energy - red);
             }
+            // CR 828 — the disempower component can only be paid by a source
+            // that IS Empowered. The action generators gate on this, but
+            // executeIntent is reachable with hand-built intents (agents, the
+            // OpenSpiel bridge, replays), so re-validate before ANYTHING is
+            // paid: disempowerObject no-ops on a non-empowered source, so the
+            // old order exhausted the source and spent its energy for an
+            // activation whose cost was never actually paid. Rejected LOUDLY
+            // (logWarn, not logTrace — Trace is suppressed unless a run asks
+            // for it) with nothing paid and no chain item created.
+            if (act_cost.disempower_self && !source.is_empowered) {
+                events_.logWarn("ACTIVATE_COST: illegal activation of " +
+                                source.name + " — the [Disempower] cost "
+                                "requires an Empowered source");
+                break;
+            }
             if (act_cost.exhaust) {
                 source.is_exhausted = true;
                 events_.emit(ObjectStateChangedEvent{intent.ability_source, "exhausted"});
+            }
+            // Pay disempower-self cost (CR 828)
+            if (act_cost.disempower_self) {
+                events_.logTrace("ACTIVATE_COST: disempower " + source.name);
+                effect_executor_->disempowerObject(intent.ability_source);
             }
             // Pay energy cost
             if (act_cost.energy > 0) {
@@ -1267,8 +1361,42 @@ void GameEngine::executePlayCard(const Intent& intent) {
                      ", " + toString(card.card_type) + ", cost=" +
                      std::to_string(trace_cost) + "E)");
 
-    // Remove from current zone (hand or champion zone) (CR 354: step 1)
-    if (card.zone == ZoneType::Hand) {
+    // Play source is derived from the card's zone BEFORE it's removed
+    // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
+    // ChampionZone for a champion play, Hidden for a facedown reveal
+    // (keyed off `card.is_hidden`, which the removal block below clears).
+    // Named event_play_source (not play_source) so it doesn't
+    // shadow-by-name intent.play_source below, which drives
+    // current_play_source/cost-payment concerns and can legitimately differ.
+    Intent::PlaySource event_play_source = playSourceFor(card);
+
+    // ── Facedown reveal of a PERMANENT (CR 811) ──
+    //
+    // A card hidden at a battlefield gains [Reaction] the turn after it was
+    // hidden and is offered as a closed-state PlayReaction while still face
+    // down; ChainManager routes the NON-SPELL half here, the mirror of the
+    // spell half executePlaySpell already handles. Read the status BEFORE the
+    // removal block clears it: it suppresses every cost path (CR 811 — the
+    // card is played IGNORING its base cost), zeroes the reported energy, and
+    // gates the PlayedFromFacedownEvent that Katarina, Reckless (585) triggers
+    // on. `hidden_from` is the battlefield it was face down at, captured for
+    // the landing-location default below.
+    const bool hidden_play = card.is_hidden;
+    const BattlefieldId hidden_from = card.hidden_at;
+
+    // Remove from current zone (facedown zone, hand or champion zone)
+    // (CR 354: step 1)
+    if (hidden_play) {
+        for (auto& bf : state_.battlefields) {
+            auto fit = std::find(bf.facedown.begin(), bf.facedown.end(),
+                                  intent.card);
+            if (fit == bf.facedown.end()) continue;
+            bf.facedown.erase(fit);
+            break;
+        }
+        card.is_hidden = false;
+        card.hidden_at = kInvalidId;
+    } else if (card.zone == ZoneType::Hand) {
         auto it = std::find(ps.hand.begin(), ps.hand.end(), intent.card);
         if (it != ps.hand.end()) ps.hand.erase(it);
     } else if (card.zone == ZoneType::ChampionZone) {
@@ -1283,8 +1411,11 @@ void GameEngine::executePlayCard(const Intent& intent) {
     // do, reduce my cost by [2]." Decided BEFORE payment so the discount applies;
     // staged into transient_play_discount (consumed by payCardCost) and cleared
     // after. Skipped on an alternative-cost play.
+    // A facedown reveal skips this whole section: CR 811 plays the card
+    // IGNORING its base cost, which takes the optional additional costs that
+    // modify that base cost with it.
     int prepay_discount = 0;
-    if (!intent.use_alt_play_cost) {
+    if (!hidden_play && !intent.use_alt_play_cost) {
         const Card* pc = card.card_def_id != kInvalidId
             ? card_registry_.get(card.card_def_id) : nullptr;
         Card::OptionalAdditionalCost oac = pc ? pc->optionalAdditionalCost()
@@ -1317,7 +1448,9 @@ void GameEngine::executePlayCard(const Intent& intent) {
     ps.transient_play_discount += prepay_discount;
 
     ps.current_play_source = intent.play_source;
-    if (intent.use_alt_play_cost) {
+    if (hidden_play) {
+        // CR 811 — nothing is paid for a facedown reveal.
+    } else if (intent.use_alt_play_cost) {
         // Alternative play cost (Jhin, Meticulous Killer: "play me for [B]"):
         // pay the card's alternativePlayCost instead of the printed cost.
         const Card* c = (card.card_def_id != kInvalidId)
@@ -1342,8 +1475,11 @@ void GameEngine::executePlayCard(const Intent& intent) {
 
     // "You may pay X as an additional cost to play me" (Akshan, Nami). Paid
     // here — after the base cost, before CardPlayedEvent fires WhenYouPlayMe —
-    // so the card's play trigger can read card_counters[paid_flag].
-    maybePayOptionalAdditionalCost(intent.player, intent.card);
+    // so the card's play trigger can read card_counters[paid_flag]. Skipped on
+    // a facedown reveal for the same CR 811 reason as the base cost.
+    if (!hidden_play) {
+        maybePayOptionalAdditionalCost(intent.player, intent.card);
+    }
 
     // Track play count
     ps.cards_played_this_turn++;
@@ -1357,15 +1493,35 @@ void GameEngine::executePlayCard(const Intent& intent) {
         }
     }
     int energy_spent = 0;
-    if (card.card_def_id != kInvalidId) {
+    if (!hidden_play && card.card_def_id != kInvalidId) {
+        // CR 811 — the reveal ignored the base cost, so nothing was spent on
+        // it. Reporting the printed cost here would feed a play that cost zero
+        // into every "energy spent" consumer. Same rule executePlaySpell
+        // applies to a facedown spell.
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
+    // "When you play a card from face down" (Katarina, Reckless 585) is
+    // card-type agnostic, so a PERMANENT reveal fires it too. Emitted here,
+    // beside the CardPlayedEvent for the same play and preceding it, so a
+    // subscriber that reads both sees the facedown fact first — the ordering
+    // executePlaySpell uses for the spell half.
+    if (hidden_play) {
+        events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
+    }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, energy_spent});
+        card.card_type, ps.cards_played_this_turn, energy_spent, event_play_source});
 
-    // Store the play location on the game object so resolvePermanent can use it.
-    // Permanents choose location during finalization (CR 355.2.a).
-    card.location = intent.play_location.value_or(BaseLocation{intent.player});
+    // Store the play location on the game object so resolvePermanent can use
+    // it. Permanents choose location during finalization (CR 355.2.a). A
+    // facedown reveal defaults to the battlefield the card was hidden at: the
+    // closed-state generator emits no play_location for a hidden play, and
+    // CR 811 reveals the card where it lay — the same locus CR 811.1.d.2 uses
+    // to restrict a hidden SPELL's targets. Everything else defaults to base.
+    LocationId default_loc = BaseLocation{intent.player};
+    if (hidden_play && hidden_from != kInvalidId) {
+        default_loc = BattlefieldLocation{hidden_from};
+    }
+    card.location = intent.play_location.value_or(default_loc);
 
     // CR 135.2.b.3 + CR 355.1 — "As you play me" / "As I am played"
     // instructions execute during the play action itself, not as a
@@ -1382,10 +1538,108 @@ void GameEngine::executePlayCard(const Intent& intent) {
         }
     }
 
-    // Route through chain — permanent resolves immediately at Finalize (CR 337.1.c)
-    chain_manager_->addPermanent(intent.card, intent.player);
+    // Route through chain — permanent resolves immediately at Finalize
+    // (CR 337.1.c). The play's targets ride along on the item because
+    // resolvePermanent reads them: [Quick-Draw] gear attaches to the unit
+    // the play named as it enters (CR 819). Every other permanent play
+    // carries no targets, so nothing else sees a change.
+    chain_manager_->addPermanent(intent.card, intent.player, intent.targets);
     runChain();
 }
+
+namespace {
+
+// ── Sandswept Tomb (792) — "Each spell that chooses one or more units here
+//    that are friendly to it costs [A] less." ────────────────────────────────
+//
+// The discount is a POWER (rune) reduction of 1 in ANY domain, and the flag
+// lives on the BATTLEFIELD (BattlefieldState::friendly_spell_power_discount),
+// so it applies to whoever is playing the spell — "friendly to IT" means
+// friendly to the spell's controller, and both players benefit from the Tomb.
+// These helpers are the single source of truth for "does this play earn the
+// discount, and how much", shared by the two action generators and by
+// executePlaySpell.
+
+/// The discount earned by a play whose chosen targets are already known: the
+/// sum over the DISTINCT flagged battlefields at which `player` has a chosen
+/// friendly unit (two Tombs each independently say "costs [A] less").
+int tombDiscountForTargets(const GameState& state, PlayerId player,
+                            const std::vector<GameObjectId>& targets) {
+    int total = 0;
+    std::vector<BattlefieldId> counted;
+    for (auto t : targets) {
+        if (!state.objectExists(t)) continue;
+        const auto& obj = state.getObject(t);
+        if (!obj.isUnit() || obj.controller != player) continue;
+        auto at = obj.battlefieldId();
+        if (!at) continue;
+        if (std::find(counted.begin(), counted.end(), *at) != counted.end())
+            continue;
+        for (const auto& b : state.battlefields) {
+            if (b.id != *at || b.friendly_spell_power_discount <= 0) continue;
+            total += b.friendly_spell_power_discount;
+            counted.push_back(*at);
+            break;
+        }
+    }
+    return total;
+}
+
+/// Does `player` have at least one legal target that is a friendly unit
+/// located at battlefield `bf`? (The eligibility gate for a restricted offer.)
+bool hasFriendlyUnitTargetAt(const GameState& state, PlayerId player,
+                              const std::vector<GameObjectId>& legal_targets,
+                              BattlefieldId bf) {
+    for (auto t : legal_targets) {
+        if (!state.objectExists(t)) continue;
+        const auto& obj = state.getObject(t);
+        if (!obj.isUnit() || obj.controller != player) continue;
+        auto at = obj.battlefieldId();
+        if (at && *at == bf) return true;
+    }
+    return false;
+}
+
+/// Upper bound on the discount ANY offer for this card could earn — used only
+/// as the cheap up-front cost gate, before the per-offer price is known.
+int bestTombDiscount(const GameState& state, PlayerId player, int power_cost,
+                      const std::vector<GameObjectId>& legal_targets) {
+    if (power_cost <= 0) return 0;   // nothing to discount
+    int total = 0;
+    for (const auto& b : state.battlefields) {
+        if (b.friendly_spell_power_discount <= 0) continue;
+        if (!hasFriendlyUnitTargetAt(state, player, legal_targets, b.id)) continue;
+        total += b.friendly_spell_power_discount;
+    }
+    return total;
+}
+
+/// Stage a power discount across an affordability query. The two action
+/// generators are const — they only read state to build the legal list — but
+/// the field the cost sites read (PlayerState::transient_power_discount) is
+/// state, so it is written through a const_cast and restored by the
+/// destructor. Nothing runs between the two, so the query stays observably
+/// const; the engine object itself is never const, only these query methods.
+struct StagedPowerDiscount {
+    PlayerState* ps = nullptr;
+    int saved = 0;
+    StagedPowerDiscount(const GameState& state, PlayerId player, int amount) {
+        // ALWAYS write, including a zero amount: a query must price the card
+        // at exactly the discount it was handed, never at whatever happened to
+        // be sitting in the field. (A state cloned mid-payment — MCTS does
+        // clone states — carries a live non-zero staging value, and a guard
+        // that skipped the write for 0 would silently let it leak into every
+        // undiscounted offer generated from that clone.)
+        ps = &const_cast<GameState&>(state).player(player);
+        saved = ps->transient_power_discount;
+        ps->transient_power_discount = std::max(0, amount);
+    }
+    ~StagedPowerDiscount() { ps->transient_power_discount = saved; }
+    StagedPowerDiscount(const StagedPowerDiscount&) = delete;
+    StagedPowerDiscount& operator=(const StagedPowerDiscount&) = delete;
+};
+
+}  // namespace
 
 void GameEngine::executePlaySpell(const Intent& intent) {
     auto& ps = state_.player(intent.player);
@@ -1401,8 +1655,174 @@ void GameEngine::executePlaySpell(const Intent& intent) {
                          ") targets=[" + tgt_str + "]");
     }
 
+    // ── Facedown reveal (CR 811) ──
+    //
+    // A card hidden at a battlefield gains [Reaction] the turn after it was
+    // hidden and is offered as a closed-state PlayReaction while still
+    // face down; ChainManager routes the SPELL half here. Read the status
+    // BEFORE anything below clears it: it decides the play source, suppresses
+    // every cost path (CR 811 — the card is played IGNORING its base cost),
+    // and gates the PlayedFromFacedownEvent that Katarina, Reckless (585)
+    // triggers on.
+    const bool hidden_play = card.is_hidden;
+
+    // ── Sandswept Tomb (792): what this play's POWER discount is ──
+    //
+    // Two shapes, decided BEFORE anything is paid (both cost paths below read
+    // it):
+    //   • a RESTRICTED intent — the play commits to choosing at a named
+    //     battlefield. `target_battlefield_restriction` is a CLAIM, not a
+    //     fact, exactly like `flow_source` is (see the Flow block below):
+    //     executePlaySpell is reachable with hand-built intents — agents, the
+    //     OpenSpiel bridge, replays — so the discount is RE-EARNED here
+    //     against live state, never trusted. The battlefield's flag alone is
+    //     not enough: the play must actually have an eligible friendly unit
+    //     to choose there, or it would pay [A] less for a condition it cannot
+    //     meet (pickTarget filters to nothing and the spell fizzles — at a
+    //     discount). Anything else fails LOUDLY and executes nothing;
+    //   • otherwise, whatever this play's already-chosen (play-time) targets
+    //     earn — a friendly unit at a flagged battlefield.
+    int tomb_power_discount = 0;
+    if (intent.target_battlefield_restriction.has_value()) {
+        const BattlefieldId rbf = *intent.target_battlefield_restriction;
+        int flag = 0;
+        for (const auto& b : state_.battlefields) {
+            if (b.id != rbf) continue;
+            flag = b.friendly_spell_power_discount;
+            break;
+        }
+        // The same legal list the generators gated the offer on — the
+        // requirement-level superset of whatever lists the card itself builds
+        // at resolve time, so offer, payment and picker all agree on who is
+        // eligible.
+        const Card* restricted_card = (card.card_def_id != kInvalidId)
+            ? card_registry_.get(card.card_def_id) : nullptr;
+        const auto restricted_legal = restricted_card
+            ? restricted_card->enumerateLegalTargets(state_, intent.player)
+            : std::vector<GameObjectId>{};
+        if (flag <= 0 ||
+            !hasFriendlyUnitTargetAt(state_, intent.player, restricted_legal,
+                                      rbf)) {
+            // logWarn, not logTrace: an illegal intent reaching execution must
+            // be visible in an ordinary run (the Flow rejection below says the
+            // same thing at more length).
+            events_.logWarn("TOMB: illegal restricted intent for " + card.name +
+                            " — no eligible friendly unit at battlefield " +
+                            std::to_string(rbf));
+            return;
+        }
+        tomb_power_discount = flag;
+    } else {
+        tomb_power_discount =
+            tombDiscountForTargets(state_, intent.player, intent.targets);
+    }
+
+    // ── Flow (CR 829): validate the claim BEFORE anything mutates ──
+    //
+    // `intent.flow_source` is a CLAIM, not a fact: executePlaySpell is
+    // reachable with hand-built intents (agents, the OpenSpiel bridge,
+    // replays), so the claim is re-checked against live state here — the last
+    // point at which nothing has changed yet. A flow play is legal only out
+    // of the trash, only for a cost that is live on the object right now, and
+    // only when that exact cost is payable right now. Anything else fails
+    // LOUDLY and executes nothing: silently degrading into a printed-cost
+    // play (the pre-fix behaviour) let a hand-tagged intent pay a flow cost
+    // out of hand and let a rejected play eat an unrelated replay grant.
+    const bool flow_play = intent.flow_source != Intent::FlowSource::None;
+    Card::FlowCost flow_cost{};
+    Domain flow_domain = Domain::Fury;
+    if (flow_play) {
+        // logWarn, not logTrace: Trace is suppressed unless a run asks for it
+        // (game_runner / main gate it behind --trace), and an illegal intent
+        // reaching execution must be visible in an ordinary run.
+        auto reject = [&](const std::string& reason) {
+            events_.logWarn("FLOW: illegal flow intent for " + card.name +
+                            " — " + reason);
+        };
+        if (intent.play_source != Intent::PlaySource::Trash) {
+            reject("play_source is not Trash");
+            return;
+        }
+        if (card.zone != ZoneType::Trash ||
+            std::find(ps.trash.begin(), ps.trash.end(), intent.card) ==
+                ps.trash.end()) {
+            reject("the card is not in its controller's trash");
+            return;
+        }
+        const bool wants_granted =
+            intent.flow_source == Intent::FlowSource::Granted;
+        bool found = false;
+        for (const auto& offer : liveFlowCosts(intent.card)) {
+            if (offer.source != intent.flow_source) continue;
+            flow_cost = offer.cost;
+            found = true;
+            break;
+        }
+        if (!found) {
+            reject(std::string("no live ") +
+                   (wants_granted ? "granted" : "printed") + " flow cost");
+            return;
+        }
+        // Sandswept Tomb (792): Flow REPLACES the base cost, so the [A]
+        // discount comes off the FLOW cost's power component instead — the
+        // same reduction the flow generator priced this offer with. Applied
+        // to the local copy, so the payability check, the payment and the
+        // trace all agree.
+        if (tomb_power_discount > 0) {
+            flow_cost.power = std::max(0, flow_cost.power - tomb_power_discount);
+        }
+        bool payable = false;
+        if (flow_cost.any_domain) {
+            for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
+                if (canPayAdditionalCost(intent.player, flow_cost.energy,
+                                          flow_cost.power,
+                                          static_cast<Domain>(di))) {
+                    flow_domain = static_cast<Domain>(di);
+                    payable = true;
+                    break;
+                }
+            }
+        } else {
+            flow_domain = flow_cost.power_domain;
+            payable = canPayAdditionalCost(intent.player, flow_cost.energy,
+                                            flow_cost.power, flow_domain);
+        }
+        if (!payable) {
+            reject("cannot pay [E" + std::to_string(flow_cost.energy) +
+                   "][P" + std::to_string(flow_cost.power) + "]");
+            return;
+        }
+    }
+
+    // Play source is derived from the card's zone BEFORE it's removed
+    // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
+    // Trash for a trash-replay (Fizz / Death from Below style plays),
+    // Hidden for a facedown reveal (keyed off `card.is_hidden`, which the
+    // removal block below clears).
+    // Named event_play_source (not play_source) so it doesn't
+    // shadow-by-name intent.play_source below (drives
+    // current_play_source / the trash-replay-grant cost path and can
+    // legitimately differ). Capture-before-mutation is kept here even
+    // though this function's own zone-removal block doesn't touch
+    // card.zone itself (only ps.hand/ps.trash) — cheap insurance
+    // against a future change to that block silently breaking this.
+    Intent::PlaySource event_play_source = playSourceFor(card);
+
     // Remove from the source zone.
-    if (card.zone == ZoneType::Hand) {
+    if (hidden_play) {
+        // Facedown reveal (CR 811): the card leaves the battlefield's
+        // facedown zone and stops being hidden. addSpell below moves it on to
+        // the chain zone, so nothing else has to touch `card.zone` here.
+        for (auto& bf : state_.battlefields) {
+            auto fit = std::find(bf.facedown.begin(), bf.facedown.end(),
+                                  intent.card);
+            if (fit == bf.facedown.end()) continue;
+            bf.facedown.erase(fit);
+            break;
+        }
+        card.is_hidden = false;
+        card.hidden_at = kInvalidId;
+    } else if (card.zone == ZoneType::Hand) {
         auto it = std::find(ps.hand.begin(), ps.hand.end(), intent.card);
         if (it != ps.hand.end()) ps.hand.erase(it);
     } else if (intent.play_source == Intent::PlaySource::Trash &&
@@ -1412,13 +1832,58 @@ void GameEngine::executePlaySpell(const Intent& intent) {
         if (it != ps.trash.end()) ps.trash.erase(it);
     }
 
-    // Pay cost. A trash-replay grant overrides the printed cost (and its own
-    // additional costs); otherwise the normal play_source-aware path runs.
+    // Flow (CR 829) — an ALTERNATE cost that REPLACES the base cost
+    // (CR 829.1.c.1): the trash-replay grant, payCardCost and the
+    // optional-cost riders are all skipped. `flow_cost` / `flow_domain` were
+    // resolved and proven payable by the validation block above, so this only
+    // spends them.
+    bool paid_via_flow = false;
+    if (flow_play) {
+        paid_via_flow = payAdditionalCost(intent.player, flow_cost.energy,
+                                           flow_cost.power, flow_domain);
+        if (paid_via_flow) {
+            events_.logTrace("FLOW: " + card.name +
+                " played from trash for [E" + std::to_string(flow_cost.energy) +
+                "][P" + std::to_string(flow_cost.power) + "] (" +
+                (intent.flow_source == Intent::FlowSource::Granted
+                    ? "granted" : "printed") + ")");
+            // A GRANTED Flow is consumed by the play it paid for. A printed
+            // one consumes nothing, so a live grant survives a printed-cost
+            // play untouched.
+            if (intent.flow_source == Intent::FlowSource::Granted) {
+                card.granted_flow.reset();
+            }
+        } else {
+            // Unreachable: canPayAdditionalCost was checked for this exact
+            // (energy, power, domain) in the validation block, and nothing
+            // between there and here touches runes. Treated as an engine
+            // invariant violation the way the cost path's other
+            // "can't happen" is (assert in a debug build), plus a loud log so
+            // a release build leaves a trace instead of a silent miscount.
+            // paid_via_flow stays false, so the ordinary payment path below
+            // still charges the spell rather than granting it for free.
+            assert(false && "FLOW: payAdditionalCost failed after validation");
+            events_.logWarn("FLOW: payment failed after validation for " +
+                            card.name + " — engine invariant violated");
+        }
+    }
+
+    // Pay cost. A facedown reveal pays nothing at all (CR 811 — played
+    // IGNORING its base cost, which takes the trash-replay grant and the
+    // printed-cost path with it). A trash-replay grant overrides the printed
+    // cost (and its own additional costs); otherwise the normal
+    // play_source-aware path runs.
     bool paid_via_grant = false;
-    if (intent.play_source == Intent::PlaySource::Trash) {
+    if (!hidden_play && !paid_via_flow &&
+        intent.play_source == Intent::PlaySource::Trash) {
+        // Sandswept Tomb's discount is deliberately NOT applied to a
+        // trash-replay grant: the grant is a flat override cost of its own
+        // (Death from Below's "play a spell from your trash for [1]"), and
+        // generateTrashReplayActions emits no restricted offers, so offer and
+        // payment stay in step. Neither deck in scope contains such a grant.
         paid_via_grant = payTrashReplayGrant(intent.player, intent.card);
     }
-    if (!paid_via_grant) {
+    if (!hidden_play && !paid_via_flow && !paid_via_grant) {
         ps.current_play_source = intent.play_source;
         // Irelia, Graceful (462): "your spells that choose me cost [1]/[A] less."
         // Stage the largest per-target reduction among this spell's chosen
@@ -1430,7 +1895,13 @@ void GameEngine::executePlaySpell(const Intent& intent) {
                 tgt_disc = std::max(tgt_disc,
                     state_.getObject(t).spells_targeting_me_cost_reduction);
         ps.transient_play_discount = tgt_disc;
+        // Sandswept Tomb (792): the POWER half of the same idea. canAfford
+        // and beginCostPayment subtract it from the power requirement; it is
+        // staged only across this one payment and cleared immediately after,
+        // on this single exit path (payCardCost cannot throw past it).
+        ps.transient_power_discount = tomb_power_discount;
         payCardCost(intent.player, intent.card);
+        ps.transient_power_discount = 0;
         ps.transient_play_discount = 0;
         ps.current_play_source = Intent::PlaySource::Hand;
 
@@ -1513,7 +1984,19 @@ void GameEngine::executePlaySpell(const Intent& intent) {
     // Track play count
     ps.cards_played_this_turn++;
     int energy_spent = 0;
-    if (card.card_def_id != kInvalidId) {
+    if (hidden_play) {
+        // CR 811 — the reveal ignored the base cost, so nothing was spent on
+        // it. Reporting the printed cost here would feed a play that cost
+        // zero into max_spell_spent_this_turn (Jhin) and the chain item's
+        // total_energy_spent (Forgotten Library, Virtuoso).
+        energy_spent = 0;
+    } else if (paid_via_flow) {
+        // Flow REPLACED the base cost — report what was actually spent, so
+        // CardPlayedEvent / max_spell_spent_this_turn (Jhin) and the chain
+        // item's total_energy_spent (Forgotten Library, Virtuoso) all read
+        // the flow energy, not the printed cost that was never paid.
+        energy_spent = flow_cost.energy;
+    } else if (card.card_def_id != kInvalidId) {
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
     }
     int total_energy_spent = energy_spent + repeats * repeat_cost.energy;
@@ -1532,17 +2015,40 @@ void GameEngine::executePlaySpell(const Intent& intent) {
             ps.next_spell_bonus_damage = 0;
         }
     }
+    // "When you play a card from face down" (Katarina, Reckless 585). This is
+    // the LIVE reveal path — the event fires here, beside the CardPlayedEvent
+    // for the same play, and precedes it so a subscriber that reads both sees
+    // the facedown fact first (the ordering the removed, never-called
+    // executePlayFromHidden used, and the only place this event was emitted
+    // from before — so it never fired in a real game).
+    if (hidden_play) {
+        events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
+    }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
-        card.card_type, ps.cards_played_this_turn, total_energy_spent});
+        card.card_type, ps.cards_played_this_turn, total_energy_spent, event_play_source});
 
     // Add spell to chain with targets. Carry energy_spent and repeats_paid
     // onto the chain item — ChainManager re-resolves the spell `repeats_paid`
     // extra times in its post-resume loop.
     auto chain_id = chain_manager_->addSpell(intent.card, intent.player, intent.targets);
-    (void)chain_id;
-    if (!state_.chain.items.empty()) {
-        state_.chain.items.back().total_energy_spent = total_energy_spent;
-        state_.chain.items.back().repeats_paid = repeats;
+    // One by-id lookup for everything this play stamps onto its own chain
+    // item. (addSpell appends, so this is the item the previous `back()`
+    // reached — addressing it by id just says so explicitly, and keeps the
+    // flow flag from needing a second scan.)
+    for (auto& item : state_.chain.items) {
+        if (item.id != chain_id) continue;
+        item.total_energy_spent = total_energy_spent;
+        item.repeats_paid = repeats;
+        // CR 829.1.b.1 — a spell played for its Flow cost is BANISHED as it
+        // leaves the chain, not trashed. Flag it here; the disposal sites
+        // (ChainManager::stepResolve, the counter/revert path) read it.
+        if (paid_via_flow) item.banish_on_leave = true;
+        // Sandswept Tomb (792) — the commitment the discounted offer made.
+        // Card::pickTarget reads it off the resuming chain item and filters
+        // the resolve-time legal list to units at that battlefield, so the
+        // choice can never dodge the condition the discount was paid for.
+        item.target_battlefield_restriction = intent.target_battlefield_restriction;
+        break;
     }
 
     // Run the FEPR loop
@@ -1550,6 +2056,15 @@ void GameEngine::executePlaySpell(const Intent& intent) {
 }
 
 void GameEngine::runChain() {
+    // Re-entrancy guard. BOTH play executors end here — executePlaySpell and
+    // executePlayCard — and a Closed-State [Reaction] play is routed into one
+    // of them from INSIDE ChainManager::processFEPR (setPlaySpell for spells,
+    // setPlayCard for units and gear). The item that play just added belongs
+    // to the loop already running — stepExecuteAndPass restarts it at Finalize
+    // the moment it sees the chain grew. Starting a second loop here would
+    // instead resolve the whole chain out from under the outer one.
+    if (chain_manager_->isProcessing()) return;
+
     chain_manager_->processFEPR(
         // Agent query callback
         [this](PlayerId player, const std::vector<Intent>& actions) -> Intent {
@@ -2010,42 +2525,6 @@ void GameEngine::executeHideCard(const Intent& intent) {
     events_.emit(CardHiddenEvent{intent.card, intent.player});
 }
 
-void GameEngine::executePlayFromHidden(const Intent& intent) {
-    auto& card = state_.getObject(intent.card);
-    auto bf_id = card.hidden_at;
-    auto& bf = getBattlefield(bf_id);
-
-    // Remove from facedown zone
-    auto it = std::find(bf.facedown.begin(), bf.facedown.end(), intent.card);
-    if (it != bf.facedown.end()) bf.facedown.erase(it);
-
-    card.is_hidden = false;
-    card.hidden_at = kInvalidId;
-
-    // "When you play a card from face down" (Katarina, Reckless).
-    events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
-
-    // Play ignoring base cost — permanents go to the BF they were hidden at
-    if (card.isPermanent()) {
-        card.location = BattlefieldLocation{bf_id};
-        // Route through chain like normal plays
-        auto& ps = state_.player(intent.player);
-        ps.cards_played_this_turn++;
-        // Hidden play is "ignoring its base cost" (CR 811) — energy_spent = 0.
-        events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0});
-        chain_manager_->addPermanent(intent.card, intent.player);
-        runChain();
-    } else if (card.isSpell()) {
-        auto& ps = state_.player(intent.player);
-        ps.cards_played_this_turn++;
-        events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0});
-        chain_manager_->addSpell(intent.card, intent.player, intent.targets);
-        runChain();
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Legal action generation
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2271,6 +2750,8 @@ std::vector<Intent> GameEngine::generateMainPhaseActions(PlayerId player) const 
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Activate abilities on gear/legends/units ([E]: abilities)
@@ -2389,6 +2870,8 @@ std::vector<Intent> GameEngine::generateShowdownActions(PlayerId player) const {
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/true, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Ambush: play units with [Ambush] during showdowns
@@ -2454,6 +2937,7 @@ std::vector<Intent> GameEngine::generateShowdownActions(PlayerId player) const {
             const auto& ab = abilities[ai];
             if (!ab.is_action) continue;
             if (ab.cost.exhaust && obj.is_exhausted) continue;
+            if (ab.cost.disempower_self && !obj.is_empowered) continue;
 
             auto legal_targets = card->enumerateLegalTargets(
                 state_, player, static_cast<int>(ai));
@@ -2510,6 +2994,8 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                               actions);
         generateTrashReplayActions(player, /*action_ok=*/false, /*reaction_ok=*/true,
                                     actions);
+        generateFlowPlayActions(player, /*action_ok=*/false, /*reaction_ok=*/true,
+                                 actions);
     }
 
     // Quick-Draw: play gear with [Quick-Draw] as Reactions targeting a friendly unit
@@ -2627,8 +3113,7 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                 }
             }
 
-            // No-target hidden play (or permanent — its location is set
-            // to the hidden-at BF by executePlayFromHidden).
+            // No-target hidden play (spell or permanent).
             Intent play;
             play.type = IntentType::PlayReaction;
             play.player = player;
@@ -2657,6 +3142,7 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                 const auto& ab = abilities[ai];
                 if (!ab.is_reaction) continue;
                 if (ab.cost.exhaust && obj.is_exhausted) continue;
+                if (ab.cost.disempower_self && !obj.is_empowered) continue;
                 int net_energy = std::max(0, ab.cost.energy -
                     card_obj->activationCostReduction(state_, player, (int)ai));
                 if (net_energy > 0 && availableEnergy(player) < net_energy) continue;
@@ -2716,7 +3202,10 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
     for (auto card_id : ps.hand) {
         auto& card = state_.getObject(card_id);
         if (!card.isSpell()) continue;
-        if (!canAfford(player, card_id)) continue;
+        // Affordability is checked BELOW, once the legal targets are known:
+        // Sandswept Tomb (792) can make a specific play cheaper than the
+        // card's printed cost, so a single up-front canAfford() would drop
+        // offers that are legal at their own discounted price.
 
         // Check timing keywords
         bool has_action = card.keywords.has(Keyword::Action);
@@ -2761,6 +3250,19 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             ? spell_card->getTargetRequirements()
             : TargetRequirements{};
 
+        // Cost gate. Priced at the BEST discount any single offer for this
+        // card could earn (Sandswept Tomb, 792) — a cheap superset filter;
+        // every offer below is then re-priced with the discount IT earns, so
+        // nothing unaffordable escapes.
+        const int card_power_cost = (card.card_def_id != kInvalidId)
+            ? card_db_.get(card.card_def_id).power_cost : 0;
+        const int tomb_best =
+            bestTombDiscount(state_, player, card_power_cost, legal_targets);
+        {
+            StagedPowerDiscount stage(state_, player, tomb_best);
+            if (!canAfford(player, card_id)) continue;
+        }
+
         // Determine intent type based on context
         IntentType intent_type = IntentType::PlayCard;
         if (state_.turn.isShowdownOpen()) {
@@ -2780,6 +3282,20 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
         // shape as Accelerate's "you may pay additional" — a yes/no at
         // cost time, not a pre-encoded vocab slot.
         auto emit = [&](Intent play, int /*R*/) {
+            // Price THIS offer with the discount its own chosen targets earn
+            // (Sandswept Tomb, 792). Zero for a target-free offer and for a
+            // resolve-time-target offer — the restricted variants emitted
+            // below carry their own, committed, discount.
+            //
+            // When no offer for this card could earn anything (`tomb_best`
+            // is 0 — the overwhelmingly common case, and the MCTS hot path)
+            // the per-offer price is provably the gate above, which already
+            // passed: skip the repeat canAfford entirely.
+            if (tomb_best > 0) {
+                StagedPowerDiscount stage(state_, player,
+                    tombDiscountForTargets(state_, player, play.targets));
+                if (!canAfford(player, card_id)) return;
+            }
             actions.push_back(play);
         };
         constexpr int kSingleEmit = 0;  // sentinel arg for emit() readability
@@ -2807,6 +3323,34 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
             // targets intentionally empty — agent picks via
             // pickTarget / pickTargetPair at resolve time.
             emit(play, kSingleEmit);
+
+            // Sandswept Tomb (792) — the restricted offer. A resolve-time
+            // target means the offer cannot know whether the discount's
+            // condition will be met, so the generator emits a SECOND intent
+            // per flagged battlefield where a legal friendly-unit target
+            // exists: taking it commits the play to choosing there and prices
+            // it with the discount. Both pick shapes are covered —
+            // Card::pickTarget narrows its one list, Card::pickTargetPair
+            // applies the caller-agnostic two-branch narrowing documented
+            // there — so a pair-pick spell (Star-Crossed, Switcheroo) earns
+            // the discount exactly like a single-pick one.
+            //
+            // Eligibility is checked against the requirement-level legal list,
+            // the superset of whatever lists the card builds at resolve time;
+            // executePlaySpell re-checks the very same condition before paying.
+            if (card_power_cost > 0) {
+                for (const auto& bf : state_.battlefields) {
+                    if (bf.friendly_spell_power_discount <= 0) continue;
+                    if (!hasFriendlyUnitTargetAt(state_, player, legal_targets,
+                                                  bf.id)) continue;
+                    StagedPowerDiscount stage(state_, player,
+                                               bf.friendly_spell_power_discount);
+                    if (!canAfford(player, card_id)) continue;
+                    Intent restricted = play;
+                    restricted.target_battlefield_restriction = bf.id;
+                    actions.push_back(restricted);
+                }
+            }
             continue;
         }
 
@@ -2858,6 +3402,193 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
     }
 }
 
+// ── Flow (CR 829) ──
+//
+// Flow is an ALTERNATE cost: "you may play me from your trash for <cost>",
+// replacing the base cost (CR 829.1.c.1) but changing nothing about timing
+// (CR 829.1.b.2). Two permissions can be live on the same object at once —
+// the card's own printed [Flow] and a grant (Kennen) — and the controller
+// chooses between them (CR 829.1.c.3), so this returns BOTH and the action
+// generator emits one intent per affordable offer.
+std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId obj) const {
+    std::vector<FlowOffer> offers;
+    if (obj == kInvalidId || !state_.objectExists(obj)) return offers;
+    const auto& o = state_.getObject(obj);
+    // A Flow cost is a permission to play the card FROM THE TRASH (CR
+    // 829.1.b) and says nothing anywhere else, so an object outside the trash
+    // has no live flow cost at all — this is what stops a hand play tagged
+    // `flow_source = Printed` from being priced as a flow play.
+    if (o.zone != ZoneType::Trash) return offers;
+
+    // Printed [Flow] — the object carries the keyword; the cost comes off the
+    // Card (the default impl reads the def, and is valid only with the keyword).
+    if (o.keywords.has(Keyword::Flow) && o.card_def_id != kInvalidId) {
+        if (const Card* c = card_registry_.get(o.card_def_id)) {
+            Card::FlowCost fc = c->flowCost();
+            if (fc.valid) offers.push_back(FlowOffer{Intent::FlowSource::Printed, fc});
+        }
+    }
+
+    // Granted [Flow] — "until end of turn" expiry is EVALUATED, not
+    // scheduled: the grant is live iff its turn stamp is the current turn.
+    if (o.granted_flow.has_value() &&
+        o.granted_flow->valid_on_turn == state_.turn.turn_number) {
+        Card::FlowCost fc;
+        fc.valid        = true;
+        fc.energy       = o.granted_flow->energy;
+        fc.power        = o.granted_flow->power;
+        fc.power_domain = o.granted_flow->power_domain;
+        fc.any_domain   = o.granted_flow->any_domain;
+        offers.push_back(FlowOffer{Intent::FlowSource::Granted, fc});
+    }
+
+    return offers;
+}
+
+namespace {
+
+/// Timing gate shared by the two trash-play generators
+/// (generateFlowPlayActions and generateTrashReplayActions), which were
+/// byte-identical here: neither a Flow cost nor a replay grant changes WHEN a
+/// spell may be played (CR 309/806/813; CR 829.1.b.2 for Flow), so the two
+/// must never drift apart. generateSpellActions keeps its own copy — its
+/// shape differs and it is out of scope for this change.
+bool trashPlayTimingAllows(const TurnState& turn, const GameObject& card,
+                            bool action_ok, bool reaction_ok) {
+    bool has_action = card.keywords.has(Keyword::Action);
+    const bool has_reaction = card.keywords.has(Keyword::Reaction);
+    if (has_reaction) has_action = true;
+    if (turn.isNeutralOpen()) return true;
+    if (turn.isShowdownOpen()) return has_action || has_reaction;
+    if (turn.isClosedState()) return has_reaction && reaction_ok;
+    return (action_ok && has_action) || (reaction_ok && has_reaction);
+}
+
+}  // namespace
+
+void GameEngine::generateFlowPlayActions(PlayerId player, bool action_ok,
+                                          bool reaction_ok,
+                                          std::vector<Intent>& actions) const {
+    auto& ps = state_.player(player);
+    if (ps.trash.empty()) return;
+    if (ps.cant_play_cards_this_turn || ps.cant_play_spells_this_turn) return;
+
+    for (auto card_id : ps.trash) {
+        if (card_id == kInvalidId) continue;
+        if (!state_.objectExists(card_id)) continue;
+        auto& card = state_.getObject(card_id);
+        if (card.zone != ZoneType::Trash) continue;
+        if (!card.isSpell()) continue;
+
+        auto offers = liveFlowCosts(card_id);
+        if (offers.empty()) continue;
+
+        // Flow changes what the play costs, never when it may happen.
+        if (!trashPlayTimingAllows(state_.turn, card, action_ok, reaction_ok))
+            continue;
+
+        Card* spell_card = card_registry_.get(card.card_def_id);
+        if (spell_card && !spell_card->hasLegalTargets(state_, player)) continue;
+        auto legal_targets = spell_card
+            ? spell_card->enumerateLegalTargets(state_, player)
+            : std::vector<GameObjectId>{};
+        auto req = spell_card ? spell_card->getTargetRequirements()
+                              : TargetRequirements{};
+
+        IntentType intent_type = IntentType::PlayCard;
+        if (state_.turn.isShowdownOpen()) intent_type = IntentType::PlayActionCard;
+        else if (state_.turn.isClosedState()) intent_type = IntentType::PlayReaction;
+
+        // One intent per live flow cost the player can actually pay (spec
+        // addendum #1) — affordability is checked against the FLOW cost,
+        // never the printed one.
+        for (const auto& offer : offers) {
+            // Flow REPLACES the base cost, so Sandswept Tomb's [A] discount
+            // comes off the FLOW cost's power component. The reduced power is
+            // passed explicitly rather than staged: this path prices through
+            // canPayAdditionalCost, which takes the cost as arguments.
+            auto flowAffordable = [&](int power) {
+                if (offer.cost.any_domain) {
+                    for (int di = 0; di < static_cast<int>(Domain::Count); ++di) {
+                        if (canPayAdditionalCost(player, offer.cost.energy, power,
+                                                  static_cast<Domain>(di)))
+                            return true;
+                    }
+                    return false;
+                }
+                return canPayAdditionalCost(player, offer.cost.energy, power,
+                                             offer.cost.power_domain);
+            };
+            auto discountedPower = [&](int discount) {
+                return std::max(0, offer.cost.power - discount);
+            };
+
+            // Cheap up-front gate, priced at the BEST discount any offer for
+            // this cost could earn; each emission below re-prices with the
+            // discount IT earns — unless nothing here can earn one, in which
+            // case the gate's answer is provably the per-offer answer.
+            const int flow_tomb_best =
+                bestTombDiscount(state_, player, offer.cost.power, legal_targets);
+            if (!flowAffordable(discountedPower(flow_tomb_best))) continue;
+
+            auto emitPlay = [&](std::vector<GameObjectId> tgts,
+                                 std::optional<BattlefieldId> restriction,
+                                 int discount) {
+                if (flow_tomb_best > 0 && !flowAffordable(discountedPower(discount)))
+                    return;
+                Intent play;
+                play.type = intent_type;
+                play.player = player;
+                play.card = card_id;
+                play.play_source = Intent::PlaySource::Trash;
+                play.flow_source = offer.source;
+                play.targets = std::move(tgts);
+                play.target_battlefield_restriction = restriction;
+                actions.push_back(play);
+            };
+            auto make = [&](std::vector<GameObjectId> tgts) {
+                const int discount =
+                    tombDiscountForTargets(state_, player, tgts);
+                emitPlay(std::move(tgts), std::nullopt, discount);
+            };
+
+            if (spell_card && req.count > 0 &&
+                (spell_card->needsPlayTimeTarget() ||
+                 spell_card->needsPlayTimeTargetPair())) {
+                make({});                              // agent picks at resolve
+                // Sandswept Tomb (792) — the restricted flow offer, the same
+                // commitment (and the same eligibility rule) the hand
+                // generator emits; see generateSpellActions.
+                if (offer.cost.power > 0) {
+                    for (const auto& bf : state_.battlefields) {
+                        if (bf.friendly_spell_power_discount <= 0) continue;
+                        if (!hasFriendlyUnitTargetAt(state_, player,
+                                                      legal_targets, bf.id))
+                            continue;
+                        emitPlay({}, bf.id, bf.friendly_spell_power_discount);
+                    }
+                }
+            } else if (req.count == 0 || (req.optional && legal_targets.empty())) {
+                make({});
+            } else if (req.count == 2) {
+                std::vector<GameObjectId> friendly, enemy;
+                for (auto tid : legal_targets) {
+                    if (state_.getObject(tid).controller == player) friendly.push_back(tid);
+                    else enemy.push_back(tid);
+                }
+                for (auto ft : friendly)
+                    for (auto et : enemy) make({ft, et});
+            } else {
+                for (auto target : legal_targets) make({target});
+            }
+        }
+    }
+}
+
+Intent::PlaySource GameEngine::playSourceFor(const GameObject& obj) const {
+    return playSourceForZone(obj.zone, obj.is_hidden);
+}
+
 void GameEngine::generateTrashReplayActions(PlayerId player, bool action_ok,
                                              bool reaction_ok,
                                              std::vector<Intent>& actions) const {
@@ -2872,22 +3603,9 @@ void GameEngine::generateTrashReplayActions(PlayerId player, bool action_ok,
         if (card.zone != ZoneType::Trash) continue;   // grant valid only in trash
         if (!card.isSpell()) continue;
 
-        // Timing gate — identical to generateSpellActions (CR 309/806/813).
-        bool has_action = card.keywords.has(Keyword::Action);
-        bool has_reaction = card.keywords.has(Keyword::Reaction);
-        if (has_reaction) has_action = true;
-        bool allowed = false;
-        if (state_.turn.isNeutralOpen()) {
-            allowed = true;
-        } else if (state_.turn.isShowdownOpen()) {
-            allowed = has_action || has_reaction;
-        } else if (state_.turn.isClosedState()) {
-            allowed = has_reaction && reaction_ok;
-        } else {
-            if (action_ok && has_action) allowed = true;
-            if (reaction_ok && has_reaction) allowed = true;
-        }
-        if (!allowed) continue;
+        // Timing gate — shared with generateFlowPlayActions (CR 309/806/813).
+        if (!trashPlayTimingAllows(state_.turn, card, action_ok, reaction_ok))
+            continue;
 
         // Affordability against the OVERRIDE cost, not the printed cost. For
         // an [A] grant, any single domain that's payable suffices.
@@ -2974,6 +3692,7 @@ void GameEngine::generateActivateAbilityActions(PlayerId player,
 
             // Check activation cost: must be ready if exhaust required
             if (act_cost.exhaust && obj.is_exhausted) continue;
+            if (act_cost.disempower_self && !obj.is_empowered) continue;
             int net_energy = std::max(0, act_cost.energy -
                 card->activationCostReduction(state_, player, (int)ai));
             if (net_energy > 0 && availableEnergy(player) < net_energy) continue;
@@ -3116,21 +3835,33 @@ std::vector<Intent> GameEngine::generateCombatDamageActions(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void GameEngine::runShowdown(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
-    events_.logTrace("SHOWDOWN: BF#" + std::to_string(bf_id) +
-                     (bf.combat_staged ? " (combat)" : " (non-combat)"));
-
-    bf.showdown_in_progress = true;
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): no
+    // `BattlefieldState&` is held across runShowdownLoop() or
+    // scoreConquer(). Card resolution inside either can APPEND a
+    // battlefield (Baron Nashor's Baron Pit), and a reference taken
+    // before the call used to become dangling — the write-back below
+    // (`showdown_in_progress = false`, `controller`, `is_contested`)
+    // landed in freed memory. The deque makes appends non-relocating;
+    // re-fetching by id makes this function correct even if that
+    // container choice is ever revisited.
+    bool combat_staged = false;
+    {
+        auto& bf = getBattlefield(bf_id);
+        combat_staged = bf.combat_staged;
+        events_.logTrace("SHOWDOWN: BF#" + std::to_string(bf_id) +
+                         (combat_staged ? " (combat)" : " (non-combat)"));
+        bf.showdown_in_progress = true;
+    }
     state_.turn.ns_state = NeutralShowdownState::Showdown;
     state_.turn.oc_state = OpenClosedState::Open;
 
-    events_.emit(ShowdownStartedEvent{bf_id, bf.combat_staged});
+    events_.emit(ShowdownStartedEvent{bf_id, combat_staged});
 
     // Showdown loop: players alternate focus, playing Action/Reaction spells.
     // Showdown closes when all players pass focus consecutively (CR 348.1).
     runShowdownLoop(bf_id);
 
-    bf.showdown_in_progress = false;
+    getBattlefield(bf_id).showdown_in_progress = false;  // re-fetch: see above
     state_.turn.ns_state = NeutralShowdownState::Neutral;
     state_.turn.oc_state = OpenClosedState::Open;
     events_.emit(ShowdownEndedEvent{bf_id});
@@ -3145,9 +3876,13 @@ void GameEngine::runShowdown(BattlefieldId bf_id) {
     if (p1_units.empty() && !p2_units.empty()) sole_player = PlayerId::Player2;
 
     if (sole_player != PlayerId::None) {
-        auto old_controller = bf.controller;
-        bf.controller = sole_player;
-        bf.is_contested = false;
+        std::optional<PlayerId> old_controller;
+        {
+            auto& bf = getBattlefield(bf_id);  // re-fetch: see above
+            old_controller = bf.controller;
+            bf.controller = sole_player;
+            bf.is_contested = false;
+        }
 
         events_.emit(ControlChangedEvent{bf_id, old_controller, sole_player});
 
@@ -3208,22 +3943,29 @@ std::optional<PlayerId> GameEngine::resolveShowdownDecision(
         return opponent(current_focus);
     }
     // CR 806 + 813 + 819 + 822 — every action available during a
-    // showdown should be routed through executeIntent. Pre-2026-05-19
+    // showdown is routed through executeIntent. Pre-2026-05-19
     // engine-audit CRITICAL #3 fix: the switch only handled
-    // PlayActionCard. Ambush units (PlayActionCard with play_location)
-    // would route here correctly because they use PlayActionCard, BUT
-    // Pouncing units use PlayReaction, Quick-Draw gear uses
-    // PlayReaction, and activated abilities with [Action] timing use
-    // ActivateActionAbility. All three silently no-op'd until the
-    // 100-action safety cap fired.
+    // PlayActionCard, so the other intent types generateShowdownActions
+    // publishes silently no-op'd until the 100-action safety cap fired.
+    //
+    // What that generator actually emits, checked against it:
+    //   • Action / Reaction SPELLS and [Ambush] units → PlayActionCard
+    //     (generateSpellActions tags an offer PlayReaction only in the
+    //     Closed State; the showdown is Open);
+    //   • Rengar-style reaction-to-attack units → PlayReaction;
+    //   • [Action]-timing [E]: abilities → ActivateActionAbility.
+    // [Quick-Draw] gear is NOT a showdown offer at all — that block lives
+    // in generateClosedStateActions, whose offers are answered by
+    // ChainManager, never here.
     //
     // The same "play a thing, reset passes, focus to opponent" shape
     // applies to all of these. We dispatch via executeIntent (which
-    // already routes each type to the correct executor) and reset
-    // focus passes.
+    // routes each type to the correct executor) and reset focus passes.
+    // The remaining cases below are safety nets for hand-built intents
+    // (agents, the OpenSpiel bridge, replays), not generator output.
     switch (chosen.type) {
-        case IntentType::PlayActionCard:     // Action spells + Ambush units
-        case IntentType::PlayReaction:       // Pouncing units, Quick-Draw gear, Reaction spells in showdown
+        case IntentType::PlayActionCard:     // Action/Reaction spells + Ambush units
+        case IntentType::PlayReaction:       // reaction-to-attack units (Rengar, Pouncing)
         case IntentType::PlayCard:           // generic play (safety)
         case IntentType::ActivateActionAbility: // [Action] [E]: abilities
         case IntentType::ActivateReactionAbility: // [Reaction] [E]: abilities
@@ -3273,14 +4015,29 @@ void GameEngine::runShowdownLoop(BattlefieldId bf_id) {
 }
 
 void GameEngine::runCombat(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
-    bf.combat_in_progress = true;
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): this
+    // function used to hold one `auto& bf` across runChain(),
+    // runShowdownLoop(), combatDamageStep() and combatResolutionStep() —
+    // all of which resolve cards, and card resolution can APPEND a
+    // battlefield (Baron Nashor's Baron Pit). Every `bf.combat_phase =`
+    // write after such a call went into freed memory. Attacker/defender
+    // are read once into locals (they are set here and not changed until
+    // combatResolutionStep clears them) and the battlefield is re-fetched
+    // by id immediately before each write.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        auto& bf = getBattlefield(bf_id);
+        bf.combat_in_progress = true;
 
-    // Determine attacker/defender (CR 459.2.b)
-    bf.attacker = bf.contested_by;
-    bf.defender = opponent(bf.contested_by);
+        // Determine attacker/defender (CR 459.2.b)
+        bf.attacker = bf.contested_by;
+        bf.defender = opponent(bf.contested_by);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
     events_.logTrace("COMBAT: BF#" + std::to_string(bf_id) + " attacker=" +
-                     toString(*bf.attacker) + " defender=" + toString(*bf.defender));
+                     toString(attacker) + " defender=" + toString(defender));
 
     // Assign combat designations to units
     for (auto& [id, obj] : state_.objects) {
@@ -3288,9 +4045,9 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
         auto unit_bf = obj.battlefieldId();
         if (!unit_bf || *unit_bf != bf_id) continue;
 
-        if (obj.controller == *bf.attacker) {
+        if (obj.controller == attacker) {
             obj.combat_designation = CombatDesignation::Attacker;
-        } else if (obj.controller == *bf.defender) {
+        } else if (obj.controller == defender) {
             obj.combat_designation = CombatDesignation::Defender;
         }
     }
@@ -3302,7 +4059,7 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
         }
     }
 
-    events_.emit(CombatStartedEvent{bf_id, *bf.attacker, *bf.defender});
+    events_.emit(CombatStartedEvent{bf_id, attacker, defender});
 
     // Drain any WhenIAttack / WhenIDefend / WhenIAttackOrDefend triggers
     // that the CombatStartedEvent dispatched to the chain (CR 459.2.d).
@@ -3323,45 +4080,57 @@ void GameEngine::runCombat(BattlefieldId bf_id) {
     // Re-check combat viability AFTER triggers resolve — kills or
     // bounces in trigger resolution may have emptied one side.
     {
-        auto att_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-        auto def_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+        auto att_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+        auto def_after_trig = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
         if (att_after_trig.empty() || def_after_trig.empty()) {
-            bf.combat_phase = CombatPhase::ResolutionStep;
+            // re-fetch after runChain(): see the lifetime note above
+            getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
             combatResolutionStep(bf_id);
             return;
         }
     }
 
     // Step 1: Combat Showdown — players can play Action/Reaction spells
-    bf.combat_phase = CombatPhase::ShowdownStep;
+    getBattlefield(bf_id).combat_phase = CombatPhase::ShowdownStep;
     runShowdownLoop(bf_id);
 
     // After showdown: check if combat can continue (CR 460.1)
     // Damage step only occurs if both sides still have units
-    auto att_check = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_check = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_check = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_check = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (att_check.empty() || def_check.empty()) {
         // One side was eliminated during showdown — skip damage, go to resolution
-        bf.combat_phase = CombatPhase::ResolutionStep;
+        // re-fetch after runShowdownLoop(): see the lifetime note above
+        getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
         combatResolutionStep(bf_id);
         return;
     }
 
     // Step 2: Combat Damage
-    bf.combat_phase = CombatPhase::DamageStep;
+    getBattlefield(bf_id).combat_phase = CombatPhase::DamageStep;
     combatDamageStep(bf_id);
 
-    // Step 3: Resolution
-    bf.combat_phase = CombatPhase::ResolutionStep;
+    // Step 3: Resolution — re-fetch after combatDamageStep()
+    getBattlefield(bf_id).combat_phase = CombatPhase::ResolutionStep;
     combatResolutionStep(bf_id);
 }
 
 void GameEngine::combatDamageStep(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): read the
+    // seats out ONCE, up front. runOneSide() below resolves damage
+    // assignments — card resolution, which can append a battlefield — so
+    // no BattlefieldState& survives past this block.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        const auto& bf = getBattlefield(bf_id);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
 
-    auto att_units = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_units = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_units = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_units = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (att_units.empty() || def_units.empty()) return;
 
@@ -3438,8 +4207,8 @@ void GameEngine::combatDamageStep(BattlefieldId bf_id) {
     };
 
     // Attacker assigns damage to defender's units, defender assigns to attacker's
-    runOneSide(*bf.attacker, att_might, def_units);
-    runOneSide(*bf.defender, def_might, att_units);
+    runOneSide(attacker, att_might, def_units);
+    runOneSide(defender, def_might, att_units);
 }
 
 GameEngine::CombatDamageAdvance GameEngine::testHook_advanceCombatDamage(
@@ -3583,7 +4352,18 @@ void GameEngine::resolveCombatDamageDecision(const Intent& chosen) {
 }
 
 void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
-    auto& bf = getBattlefield(bf_id);
+    // BATTLEFIELD LIFETIME (see game_state.h on `battlefields`): the seats
+    // are read once here, and the battlefield is re-fetched by id after
+    // processLethalDamage() / moveUnit() / scoreConquer() rather than held
+    // across them — any of those can resolve a card that appends a
+    // battlefield.
+    PlayerId attacker = PlayerId::None;
+    PlayerId defender = PlayerId::None;
+    {
+        const auto& bf = getBattlefield(bf_id);
+        attacker = *bf.attacker;
+        defender = *bf.defender;
+    }
 
     // Combat Cleanup: heal all units, kill lethally damaged (CR 461.1.a)
     processLethalDamage();
@@ -3599,38 +4379,38 @@ void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
     }
 
     // Recall attackers if defenders still present (CR 461.1.a.2)
-    auto att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    auto def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    auto att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    auto def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     if (!att_remaining.empty() && !def_remaining.empty()) {
         // Both still have units = a tie. Normally only attackers recall
         // (CR 461.1.a.2). Symbol of the Solari (227): if the attacker controls
         // it, recall ALL units (attackers AND defenders) instead.
-        const bool recall_all = state_.player(*bf.attacker).recall_all_on_attacker_tie;
+        const bool recall_all = state_.player(attacker).recall_all_on_attacker_tie;
         for (auto uid : att_remaining) {
-            moveUnit(uid, BaseLocation{*bf.attacker});
-            events_.emit(UnitMovedEvent{uid, *bf.attacker,
-                BattlefieldLocation{bf_id}, BaseLocation{*bf.attacker}, false});
+            moveUnit(uid, BaseLocation{attacker});
+            events_.emit(UnitMovedEvent{uid, attacker,
+                BattlefieldLocation{bf_id}, BaseLocation{attacker}, false});
         }
         if (recall_all) {
             for (auto uid : def_remaining) {
-                moveUnit(uid, BaseLocation{*bf.defender});
-                events_.emit(UnitMovedEvent{uid, *bf.defender,
-                    BattlefieldLocation{bf_id}, BaseLocation{*bf.defender}, false});
+                moveUnit(uid, BaseLocation{defender});
+                events_.emit(UnitMovedEvent{uid, defender,
+                    BattlefieldLocation{bf_id}, BaseLocation{defender}, false});
             }
             events_.logTrace("SYMBOL OF THE SOLARI: attacker tie -> recall ALL units");
         }
     }
 
     // Determine combat result (CR 461.3)
-    att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.attacker);
-    def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, *bf.defender);
+    att_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, attacker);
+    def_remaining = state_.unitsAt(BattlefieldLocation{bf_id}, defender);
 
     PlayerId combat_winner = PlayerId::None;
     if (!att_remaining.empty() && def_remaining.empty()) {
-        combat_winner = *bf.attacker;
+        combat_winner = attacker;
     } else if (att_remaining.empty() && !def_remaining.empty()) {
-        combat_winner = *bf.defender;
+        combat_winner = defender;
     }
 
     // Clear combat designations
@@ -3641,23 +4421,31 @@ void GameEngine::combatResolutionStep(BattlefieldId bf_id) {
         }
     }
 
-    // End combat
-    bf.combat_in_progress = false;
-    bf.combat_phase = CombatPhase::None;
-    bf.is_contested = false;
-    bf.attacker = std::nullopt;
-    bf.defender = std::nullopt;
+    // End combat — re-fetch: moveUnit / processLethalDamage above can
+    // resolve cards, which can append a battlefield.
+    {
+        auto& bf = getBattlefield(bf_id);
+        bf.combat_in_progress = false;
+        bf.combat_phase = CombatPhase::None;
+        bf.is_contested = false;
+        bf.attacker = std::nullopt;
+        bf.defender = std::nullopt;
+    }
 
     events_.emit(CombatEndedEvent{bf_id, combat_winner});
 
     // Establish control (CR 461.5)
     if (combat_winner != PlayerId::None) {
-        auto old_controller = bf.controller;
-        bf.controller = combat_winner;
+        std::optional<PlayerId> old_controller;
+        {
+            auto& bf = getBattlefield(bf_id);  // re-fetch after the emit
+            old_controller = bf.controller;
+            bf.controller = combat_winner;
+        }
         events_.emit(ControlChangedEvent{bf_id, old_controller, combat_winner});
         scoreConquer(combat_winner, bf_id);
     } else if (att_remaining.empty() && def_remaining.empty()) {
-        bf.controller = std::nullopt;
+        getBattlefield(bf_id).controller = std::nullopt;
     }
 
     state_.turn.ns_state = NeutralShowdownState::Neutral;
@@ -3807,11 +4595,13 @@ void GameEngine::recalculateAuras() {
         ps.zilean_present = false;               // Zilean, Time Mage
     }
     // Per-BF aura-derived flags (Mageseeker Investigator / Noxus Saboteur /
-    // Altar of Blood). Reset here; re-asserted by unit/BF applyPassiveAura.
+    // Altar of Blood / Sandswept Tomb). Reset here; re-asserted by unit/BF
+    // applyPassiveAura.
     for (auto& bf : state_.battlefields) {
         bf.surcharge_enemy_multi_move = false;
         bf.opp_hidden_unrevealable = false;
         bf.death_recall_for_pay = false;
+        bf.friendly_spell_power_discount = 0;   // Sandswept Tomb (792)
     }
 
     // Step 1b: Refresh per-object targeting-protection flags from each
@@ -4568,38 +5358,18 @@ void GameEngine::drawCards(PlayerId player, int count) {
     int drawn = 0;
     for (int i = 0; i < count; ++i) {
         if (ps.main_deck.empty()) {
-            // Burn Out (CR 431.2): recycle trash into deck, then the
-            // burning-out player chooses an opponent to gain 1 point
-            // (CR 431.2.c). 1v1 = exactly one opponent. CR 431.3: if
-            // opponent reaches victory score they win immediately.
+            // Burn Out (CR 431.2/431.3) — shared with EffectExecutor::burnCards.
             if (ps.trash.empty()) {
                 events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
                                  " deck AND trash empty, cannot draw");
                 break; // truly empty — nothing to do
             }
-            ps.burned_out = true;
-            for (auto card_id : ps.trash) {
-                state_.getObject(card_id).zone = ZoneType::MainDeck;
-                ps.main_deck.push_back(card_id);
-            }
-            ps.trash.clear();
-            shuffleDeck(player);
-            PlayerId opp_id = opponent(player);
-            auto& opp_ps = state_.player(opp_id);
-            opp_ps.score++;
-            events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
-                             " deck empty, shuffled trash; " +
-                             toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
-                             std::to_string(opp_ps.score));
-            if (opp_ps.score >= state_.mode.victory_score &&
-                opp_ps.score > ps.score) {
-                state_.game_over = true;
-                state_.winner = opp_id;
-                state_.game_over_reason = std::string(toString(opp_id)) +
-                                           " wins via burn-out point (CR 431.3)";
-                events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
-                return;
-            }
+            assert(effect_executor_ &&
+                   "GameEngine::drawCards requires initSubsystems() to have "
+                   "run before an empty-deck draw (burnOut lives on the "
+                   "executor)");
+            effect_executor_->burnOut(player);
+            if (state_.game_over) return;
             // If deck still empty after shuffle (shouldn't happen), stop
             if (ps.main_deck.empty()) break;
         }
@@ -4948,6 +5718,16 @@ bool GameEngine::canAfford(PlayerId player, GameObjectId card_obj) const {
     energy_needed = std::max(min_cost, energy_needed);
     energy_needed = std::max(0, energy_needed);
 
+    // Sandswept Tomb (792): "Each spell that chooses one or more units here
+    // that are friendly to it costs [A] less." A POWER discount, staged by
+    // the caller for the specific play being priced (the action generators
+    // stage it per offer; executePlaySpell stages it around payment). Applied
+    // BEFORE the rune partition below, because that partition only bothers
+    // matching domains while power is still owed. The DOMAIN of the remaining
+    // power is unchanged — a rune of the card's domain is simply not recycled.
+    power_needed -= ps_const.transient_power_discount;
+    power_needed = std::max(0, power_needed);
+
     // Count available runes in base, partitioned by ready/exhausted
     // and matching/non-matching-domain. The CR cost-payment ordering
     // (exhaust ready runes for energy, THEN recycle exhausted runes
@@ -5119,6 +5899,12 @@ GameEngine::CostPaymentAdvance GameEngine::beginCostPayment(
     energy_needed -= ps.transient_play_discount;
     energy_needed = std::max(min_cost, energy_needed);
     energy_needed = std::max(0, energy_needed);
+    // Sandswept Tomb (792): POWER discount staged in executePlaySpell for the
+    // specific play being paid for. Mirrors the energy discount above and
+    // matches canAfford, so what was offered is what gets charged. The domain
+    // of the remaining power is unchanged.
+    power_needed -= ps.transient_power_discount;
+    power_needed = std::max(0, power_needed);
 
     // Consume one-shot modifiers that applied
     ps.cost_modifiers.erase(
@@ -5651,6 +6437,10 @@ void GameEngine::killUnit(GameObjectId unit_id) {
     unit.location = std::nullopt;
     unit.damage_marked = 0;
     unit.combat_designation = CombatDesignation::None;
+    // CR 441.1.a — Empowered clears on leaving the board. Combat death is
+    // a board-exit path too (spec addendum #10); matches the reset
+    // EffectExecutor::killObject applies on the effect/ability-kill path.
+    unit.is_empowered = false;
     if (!is_token) {
         state_.player(unit.owner).trash.push_back(unit_id);
     } else {
@@ -5783,6 +6573,14 @@ PlayerId GameEngine::activePlayer() const {
     return state_.turn.turn_player;
 }
 
+// LIFETIME CONTRACT: the returned reference is stable across appends to
+// `state_.battlefields` (it is a std::deque — see game_state.h), but it is
+// NOT a handle to hold across arbitrary card resolution: a battlefield can
+// be replaced or swapped (CR 438), and holding a reference across a
+// showdown/combat is exactly the pattern that produced the use-after-free
+// documented in .superpowers/sdd/2026-09-07-corpus-evaluator/crash-analysis.md
+// when the container was a vector. Re-fetch by id after any call that can
+// resolve a card.
 BattlefieldState& GameEngine::getBattlefield(BattlefieldId id) {
     for (auto& bf : state_.battlefields) {
         if (bf.id == id) return bf;

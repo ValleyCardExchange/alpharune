@@ -82,6 +82,25 @@ struct Intent {
     // Alternative play cost (Jhin, Meticulous Killer): when true, the payment
     // path charges Card::alternativePlayCost(...) instead of the printed cost.
     bool use_alt_play_cost = false;
+
+    // Flow (CR 829): which Flow cost this play pays. None = not a flow play
+    // (pay the printed / alt cost as usual). Printed = the card's own
+    // Card::flowCost(). Granted = GameObject::granted_flow (Kennen). Both may
+    // be live at once, in which case the generator emits one intent per cost
+    // and the controller chooses (CR 829.1.c.3).
+    enum class FlowSource : uint8_t {
+        None = 0,
+        Printed,
+        Granted,
+    };
+    FlowSource flow_source = FlowSource::None;
+
+    // Sandswept Tomb (VEN): the discounted, restricted variant of a spell
+    // offer. When set, this play commits to choosing its unit target(s) at
+    // the named battlefield, and the power cost is paid with the Tomb's
+    // discount staged in PlayerState::transient_power_discount.
+    std::optional<BattlefieldId> target_battlefield_restriction;
+
     // Aura-granted activated ability (Forge/Gardens/Heimerdinger): when nonzero,
     // this ActivateAbility invokes ability_source's GRANTED ability whose logic
     // lives on card def `granted_ability_def` (0 = the source's own ability).
@@ -180,6 +199,13 @@ struct Intent {
     /// would conflate "twin" intents (same type/card/targets/ability_source
     /// but different destinations, chosen objects, damage assignments, etc.)
     /// and bias the recorded chosen_idx toward earlier indices.
+    ///
+    /// EVERY field that can distinguish two otherwise-identical offers has to
+    /// appear below, or the lookup silently records the earlier twin: the
+    /// cost-selecting fields (`use_alt_play_cost`, `flow_source`,
+    /// `target_battlefield_restriction`) and the ability-selecting one
+    /// (`granted_ability_def`) are each the sole difference between two live
+    /// offers the generators emit side by side.
     bool operator==(const Intent& o) const {
         return type == o.type
             && player == o.player
@@ -191,6 +217,10 @@ struct Intent {
             && ability_source == o.ability_source
             && ability_index == o.ability_index
             && play_source == o.play_source
+            && use_alt_play_cost == o.use_alt_play_cost
+            && flow_source == o.flow_source
+            && granted_ability_def == o.granted_ability_def
+            && target_battlefield_restriction == o.target_battlefield_restriction
             && targets == o.targets
             && damage_assignments == o.damage_assignments
             && cards_to_mulligan == o.cards_to_mulligan
@@ -201,5 +231,27 @@ struct Intent {
             && chosen_value == o.chosen_value;
     }
 };
+
+// Derives a CardPlayedEvent's play_source from the object's ZONE (and
+// facedown-hidden status) at the moment it is played — never from the
+// executing intent (Kennen/Heart of the Tempest spec §2, addendum #2).
+// Shared by GameEngine::playSourceFor (game_engine.cpp, the four normal
+// emit sites) and EffectExecutor::playIgnoringCost (effect_executor.cpp),
+// which cannot call back into GameEngine and so mirrors the mapping
+// locally against the pre-mutation zone/is_hidden it captures itself.
+// Defined once, here, so both stay in lock-step. No Deck value: no
+// in-scope card is played from the top of the deck (Nocturne banishes
+// itself first and plays from Banishment).
+inline Intent::PlaySource playSourceForZone(ZoneType zone, bool is_hidden) {
+    if (is_hidden) return Intent::PlaySource::Hidden;
+    switch (zone) {
+        case ZoneType::Trash:        return Intent::PlaySource::Trash;
+        case ZoneType::Banishment:   return Intent::PlaySource::Banishment;
+        case ZoneType::ChampionZone: return Intent::PlaySource::ChampionZone;
+        case ZoneType::Chain:        return Intent::PlaySource::ChainZone;
+        case ZoneType::Hand:
+        default:                    return Intent::PlaySource::Hand;
+    }
+}
 
 } // namespace riftbound

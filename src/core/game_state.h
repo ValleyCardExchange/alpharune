@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -121,6 +122,7 @@ struct PlayerState {
     bool grant_repeat_base_to_next_spell = false; // The Academy (772): next spell gets [Repeat] at tranche cost = its base energy
     int zilean_double_token_turn = -1;         // Zilean, Time Mage (648): turn on which the once/turn token-doubling was used
     int transient_play_discount = 0;           // Irelia, Graceful (462): energy discount staged just before paying a specific spell (set+consumed in executePlaySpell)
+    int transient_power_discount = 0;          // Sandswept Tomb (VEN): POWER discount staged just before paying a specific spell (set+consumed in executePlaySpell); mirrors transient_play_discount
     // Phase 6q+ engine-audit follow-on: reset last_spell_energy_spent
     // at turn start. Pre-fix, a Virtuoso/Forgotten Library trigger that
     // fires off a turn-N spell could be delayed (via chain priority)
@@ -223,6 +225,7 @@ struct PlayerState {
         next_spell_bonus_damage = 0;
         grant_repeat_base_to_next_spell = false;
         transient_play_discount = 0;
+        transient_power_discount = 0;
         power_spent_this_turn = 0;
         xp_gained_this_turn = 0;
         hold_points_this_turn = 0;
@@ -283,6 +286,13 @@ struct BattlefieldState {
     // still move to other battlefields (with Ganking). Honored by
     // GameEngine::generateMainPhaseActions when emitting BF→Base moves.
     bool blocks_move_to_base = false;
+
+    // Spell-cost discount (Sandswept Tomb, VEN): "Each spell that chooses one
+    // or more units here that are friendly to it costs [A] less." Set by the
+    // Tomb's applyPassiveAura on its own battlefield; reset to 0 with the
+    // other BF aura flags in the aura-recompute reset step. "Friendly" is
+    // relative to the spell's controller, so both players benefit.
+    int friendly_spell_power_discount = 0;
 
     // Play-location restriction (Rockfall Path [530]). When true, no
     // unit/gear may be played to this battlefield. Honored by play-
@@ -376,8 +386,18 @@ struct ChainItem {
     // Targeting
     std::vector<GameObjectId> targets;
 
+    // Sandswept Tomb (VEN): when set, this spell was played with the
+    // discounted, battlefield-restricted offer — pickTarget at resolve
+    // filters the legal list to units at this battlefield, so a resolve-time
+    // choice cannot dodge the discount's condition.
+    std::optional<BattlefieldId> target_battlefield_restriction;
+
     // Classification
     bool is_spell = false;        // true for spells (go to trash on resolve)
+    // Flow (CR 829.1.b.1): a spell played for its Flow cost is BANISHED on
+    // leaving the chain, not trashed. Set by executePlaySpell on a flow play;
+    // consulted by ChainManager::stepResolve and by the counter/revert path.
+    bool banish_on_leave = false;
     bool is_permanent = false;    // true for units/gear (resolve on finalize, CR 337.1.c)
     bool is_ability = false;      // true for activated/triggered abilities
 
@@ -508,8 +528,27 @@ struct GameState {
     // Players (indexed by playerIndex())
     PlayerState players[2];
 
-    // Board
-    std::vector<BattlefieldState> battlefields;
+    // Board.
+    //
+    // std::deque, NOT std::vector, and this is load-bearing: appending a
+    // battlefield must not invalidate references, pointers or iterators to
+    // the ones already there. `EffectExecutor::addBattlefieldToken` grows
+    // this container MID-GAME (Baron Nashor's "add the Baron Pit
+    // battlefield token to the board"), while the engine holds a
+    // `BattlefieldState&` across card resolution in the staged-battlefield
+    // loop, `runShowdown` and `runCombat`. With a vector — which
+    // `setupBattlefields` leaves at size == capacity == 2 — that append is
+    // a guaranteed reallocation, and those references become dangling:
+    // reads returned garbage battlefield ids ("Battlefield not found:
+    // 3691939024") and writes landed in freed memory. deque's append never
+    // relocates existing elements, which makes every `getBattlefield`
+    // caller correct by construction.
+    //
+    // Guarded by tests/test_battlefield_stability.cpp. Do not "fix" a
+    // future recurrence with reserve() — that hides the hazard behind a
+    // capacity number and the next battlefield-token card reopens it.
+    // Root cause: .superpowers/sdd/2026-09-07-corpus-evaluator/crash-analysis.md
+    std::deque<BattlefieldState> battlefields;
 
     // All game objects (the object pool)
     std::unordered_map<GameObjectId, GameObject> objects;

@@ -168,20 +168,38 @@ inline void revertCounteredPlay(CardContext& ctx, const ChainItem& top) {
         ps.last_spell_energy_spent = 0;
 }
 
+// Move a countered spell to its owner's trash — or, if it was Flow-played
+// and leaving wasn't instructed by its own execution, to Banishment
+// instead (CR 829.1.b.1). Shared by counterChainTop and every counter card
+// that disposes of its target inline (Defy, Hard Bargain, …); each such
+// site must capture `top.banish_on_leave` BEFORE popping the chain item,
+// since the item (and its flag) is gone once popped.
+inline void disposeCounteredSpell(CardContext& ctx, GameObjectId spell,
+                                   bool banish_on_leave) {
+    if (!ctx.state.objectExists(spell)) return;
+    auto& obj = ctx.state.getObject(spell);
+    obj.location = std::nullopt;
+    if (banish_on_leave) {
+        obj.zone = ZoneType::Banishment;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
+        ctx.state.player(obj.owner).banishment.push_back(spell);
+        ctx.events.logTrace("FLOW: " + obj.name + " banished (countered)");
+    } else {
+        obj.zone = ZoneType::Trash;
+        ctx.state.player(obj.owner).trash.push_back(spell);
+        ctx.events.logTrace("COUNTER: " + obj.name + " countered -> trash");
+    }
+}
+
 inline void counterChainTop(CardContext& ctx) {
     if (ctx.state.chain.items.empty()) return;
     auto& top = ctx.state.chain.items.back();
     if (!top.is_spell) return;
     auto countered = top.source;
+    bool banish_on_leave = top.banish_on_leave;  // capture BEFORE the pop
     revertCounteredPlay(ctx, top);  // CR 425.1.b
     ctx.state.chain.items.pop_back();
-    if (ctx.state.objectExists(countered)) {
-        auto& obj = ctx.state.getObject(countered);
-        ctx.events.logTrace("COUNTER: " + obj.name + " countered -> trash");
-        obj.zone = ZoneType::Trash;
-        obj.location = std::nullopt;
-        ctx.state.player(obj.owner).trash.push_back(countered);
-    }
+    disposeCounteredSpell(ctx, countered, banish_on_leave);
 }
 
 // ── Gold tokens ──

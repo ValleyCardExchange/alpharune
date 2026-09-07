@@ -136,6 +136,24 @@ TEST_F(DeckValidatorTest, LoadFromDeckListAndValidate) {
     }
 }
 
+/// Test #26 (Kennen/Tyler deck spec §7) — the deck file the whole branch
+/// exists to make playable loads and validates with ZERO errors. It is the
+/// end-to-end witness that every card it names is registered under the name
+/// the list uses (the five VEN cards included, Sandswept Tomb last).
+TEST_F(DeckValidatorTest, KennenTylerDeckLoadsAndValidates) {
+    auto path = deckPath("kennen_tyler.txt");
+    ASSERT_TRUE(std::filesystem::exists(path))
+        << "decks/kennen_tyler.txt must exist — it is the deliverable.";
+
+    auto deck = DeckValidator::loadFromDeckList(path, db);
+    DeckValidator validator(db);
+    auto result = validator.validate(deck);
+    EXPECT_TRUE(result.is_legal);
+    for (auto& e : result.errors) {
+        ADD_FAILURE() << "  " << e;
+    }
+}
+
 TEST_F(DeckValidatorTest, MissingLegend) {
     auto deck = makeValidDeck();
     deck.legend = 0;

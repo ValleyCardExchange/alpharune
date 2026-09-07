@@ -358,6 +358,37 @@ void TriggerManager::onCardPlayed(const CardPlayedEvent& e) {
         fireLegendTrigger(TriggerType::WhenYouPlayAUnit, e.player);
     }
 
+    // "When you play [a card] from anywhere other than your hand" (Kennen
+    // spec §2 — Flow plays, trash replays, Nocturne from banishment,
+    // hidden reveals, the champion from the champion zone). play_source
+    // is derived from the card's zone at execution time
+    // (GameEngine::playSourceFor / EffectExecutor::playIgnoringCost's
+    // local mirror via playSourceForZone), never from the intent. Same
+    // board-card loop shape as WhenYouPlayASpell/WhenYouPlayAUnit above
+    // (skip the played card itself); the legend is fired directly here
+    // (rather than via fireLegendTrigger) so the played card can be
+    // attached as the chain item's triggering subject, matching
+    // WhenAUnitBecomesMighty's legend-with-subject pattern above.
+    if (e.play_source != Intent::PlaySource::Hand) {
+        for (auto& [id, other] : state_.objects) {
+            if (!other.location.has_value()) continue;
+            if (other.controller != e.player) continue;
+            if (id == e.object) continue;
+            if (cardFiresOn(card_registry_, other.card_def_id,
+                            TriggerType::WhenYouPlayFromNonHand)) {
+                fireTrigger(id, e.player, 0, TriggerType::WhenYouPlayFromNonHand,
+                            /*subject=*/e.object);
+            }
+        }
+        auto legend_id = state_.player(e.player).legend_zone;
+        if (legend_id != kInvalidId && state_.objectExists(legend_id) &&
+            cardFiresOn(card_registry_, state_.getObject(legend_id).card_def_id,
+                        TriggerType::WhenYouPlayFromNonHand)) {
+            fireTrigger(legend_id, e.player, 0,
+                        TriggerType::WhenYouPlayFromNonHand, /*subject=*/e.object);
+        }
+    }
+
     // Phase 6o (2026-05-18) — "When you choose a friendly unit."
     // The just-played card's targets are visible on chain.items.back().
     // For each target that is a friendly unit of the playing player,

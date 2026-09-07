@@ -30,6 +30,14 @@ protected:
 
     void makeEngineAndSeedBattlefields(int n_bfs = 2) {
         engine_ = std::make_unique<GameEngine>(card_db, events, card_registry);
+        // Mirrors runGame()'s order (state_ = GameState{}; initSubsystems();
+        // ...): wire up chain_manager_/effect_executor_/trigger_manager_
+        // before touching state, so every engine test hook below (drawPhase,
+        // scoreConquer, ...) has a live effect_executor_ — same as every
+        // real game. Without this, GameEngine::drawCards's empty-deck path
+        // (which delegates to effect_executor_->burnOut()) would dereference
+        // a null unique_ptr.
+        engine_->testHook_initSubsystems();
         auto& s = *eng_state();
         s.mode = ModeOfPlay{};
         s.players[0].id = P1;
@@ -482,6 +490,61 @@ TEST_F(BurnOutScoringTest, FirstPlayerSecondTurn_DrawPhaseDrawsNormally) {
     EXPECT_EQ(s.player(P1).hand.size(), 1u)
         << "P1's second turn — normal draw resumes";
     EXPECT_EQ(s.player(P1).main_deck.size(), 0u);
+}
+
+// ─── Minefield (526) burns through the shared primitive ────────────────────
+//
+// "When you conquer here, put the top 2 cards of your Main Deck into your
+// trash." Putting cards from the deck into the trash IS Burn (CR 440), so
+// running out of deck mid-burn must Burn Out (CR 431.2): recycle the trash
+// into the deck, opponent gains a point, and the rest of the burn continues
+// off the reshuffled deck. The card used to hand-roll the loop and simply
+// stopped at an empty deck, skipping burn-out entirely.
+
+TEST_F(BurnOutScoringTest, Minefield_BurnsThroughBurnOut) {
+    constexpr CardDefId kMinefield = 526;
+
+    // 1 card in deck, 2 in trash: the first burn empties the deck, the second
+    // has to burn out first.
+    auto top = addToDeck(P1, 1);
+    auto t1 = addToDeck(P1, 1);
+    auto t2 = addToDeck(P1, 1);
+    state.player(P1).main_deck.clear();
+    state.player(P1).main_deck.push_back(top);
+    for (auto cid : {t1, t2}) {
+        state.getObject(cid).zone = ZoneType::Trash;
+        state.player(P1).trash.push_back(cid);
+    }
+    ASSERT_EQ(state.player(P1).main_deck.size(), 1u);
+    ASSERT_EQ(state.player(P1).trash.size(), 2u);
+
+    // The Minefield battlefield card object (the trigger's source).
+    auto bf_card = state.createObject();
+    {
+        auto& obj = state.getObject(bf_card);
+        obj.owner = P1;
+        obj.controller = P1;
+        obj.card_def_id = kMinefield;
+        obj.card_type = CardType::Battlefield;
+        obj.name = "Minefield";
+    }
+
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    fireTriggerAs(kMinefield, P1, bf_card, TriggerType::WhenYouConquerHere, exec);
+
+    EXPECT_TRUE(state.player(P1).burned_out)
+        << "Emptying the Main Deck mid-burn must Burn Out (CR 431.2) — "
+           "Minefield burns, so it inherits burn-out parity from the shared "
+           "EffectExecutor::burnCards primitive.";
+    EXPECT_EQ(state.player(P2).score, 1)
+        << "CR 431.2.c — the opponent of the burnt-out player gains 1 point.";
+    // Burn 1: `top` -> trash (deck empty, trash = 3).
+    // Burn 2: burn out (trash 3 -> deck, shuffled), then burn 1 off the
+    //         reshuffled deck -> trash. Deck 2, trash 1.
+    EXPECT_EQ(state.player(P1).main_deck.size(), 2u)
+        << "the trash was recycled into the deck, then one more card burned";
+    EXPECT_EQ(state.player(P1).trash.size(), 1u)
+        << "exactly the second burn's card sits in the freshly-emptied trash";
 }
 
 }  // namespace

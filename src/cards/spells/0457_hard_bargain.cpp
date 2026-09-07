@@ -54,19 +54,22 @@ public:
 
             if (ready_runes < 2) {
                 // Can't afford the rescue cost — counter immediately.
+                bool banish_on_leave = false;
                 if (!ctx.state.chain.items.empty()) {
+                    banish_on_leave = ctx.state.chain.items.back().banish_on_leave;
                     revertCounteredPlay(ctx, ctx.state.chain.items.back());  // CR 425.1.b
+                    // Guarded with the read above: pop_back() on an empty
+                    // vector is undefined behaviour, and the counter target
+                    // can already be gone (another counter resolved first).
+                    ctx.state.chain.items.pop_back();
                 }
-                ctx.state.chain.items.pop_back();
                 if (ctx.state.objectExists(target_source)) {
-                    auto& obj = ctx.state.getObject(target_source);
-                    ctx.events.logTrace("HARD BARGAIN: countered " + obj.name +
+                    ctx.events.logTrace("HARD BARGAIN: countered " +
+                                         ctx.state.getObject(target_source).name +
                                          " (" + toString(target_controller) +
                                          " can't afford 2E to save)");
-                    obj.zone = ZoneType::Trash;
-                    obj.location = std::nullopt;
-                    ctx.state.player(obj.owner).trash.push_back(target_source);
                 }
+                disposeCounteredSpell(ctx, target_source, banish_on_leave);
                 return;
             }
 
@@ -127,17 +130,17 @@ public:
                                      ctx.state.getObject(target_source).name);
                 // Spell stays on chain — no pop.
             } else {
-                // Counter — pop + trash.
+                // Counter — pop + dispose.
+                bool banish_on_leave = false;
                 if (!ctx.state.chain.items.empty()) {
+                    banish_on_leave = ctx.state.chain.items.back().banish_on_leave;
                     revertCounteredPlay(ctx, ctx.state.chain.items.back());  // CR 425.1.b
                     ctx.state.chain.items.pop_back();
                 }
-                auto& obj = ctx.state.getObject(target_source);
-                ctx.events.logTrace("HARD BARGAIN: countered " + obj.name +
+                ctx.events.logTrace("HARD BARGAIN: countered " +
+                                     ctx.state.getObject(target_source).name +
                                      " (controller declined to pay)");
-                obj.zone = ZoneType::Trash;
-                obj.location = std::nullopt;
-                ctx.state.player(obj.owner).trash.push_back(target_source);
+                disposeCounteredSpell(ctx, target_source, banish_on_leave);
             }
             return;
         }

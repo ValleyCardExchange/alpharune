@@ -42,7 +42,8 @@ ChainItemId ChainManager::addSpell(GameObjectId spell_obj, PlayerId controller,
 }
 
 ChainItemId ChainManager::addPermanent(GameObjectId card_obj,
-                                         PlayerId controller) {
+                                         PlayerId controller,
+                                         const std::vector<GameObjectId>& targets) {
     auto& chain = state_.chain;
     bool was_empty = !chain.exists();
 
@@ -52,6 +53,7 @@ ChainItemId ChainManager::addPermanent(GameObjectId card_obj,
     item.source = card_obj;
     item.card_def_id = state_.getObject(card_obj).card_def_id;
     item.controller = controller;
+    item.targets = targets;
     item.is_permanent = true;
 
     chain.items.push_back(item);
@@ -105,6 +107,16 @@ void ChainManager::processFEPR(
     std::function<void(const ChainItem&)> resolve_permanent,
     std::function<void(const ChainItem&)> resolve_spell,
     ClosedActionsGen gen_closed_actions) {
+
+    // Mark the loop live for the duration (see ChainManager::isProcessing —
+    // a routed closed-state spell play re-enters GameEngine::runChain from
+    // inside stepExecuteAndPass). RAII so the two early returns below can't
+    // leave the flag stuck set.
+    struct ProcessingGuard {
+        bool& flag;
+        explicit ProcessingGuard(bool& f) : flag(f) { flag = true; }
+        ~ProcessingGuard() { flag = false; }
+    } processing_guard(processing_);
 
     constexpr int kMaxIterations = 100; // safety
     int iterations = 0;
@@ -228,7 +240,78 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             current = opponent(current);
         } else if (chosen.type == IntentType::PlayReaction) {
             auto& card = state_.getObject(chosen.card);
+
+            // ── ONE executor owns every play, spell or permanent ──
+            //
+            // Closed-State [Reaction] offers are answered here and nowhere
+            // else: GameEngine::executeIntent's PlayReaction case serves the
+            // SHOWDOWN decision path, and nothing in this class calls
+            // executeIntent, so the two can't double-execute. Both halves
+            // route back out to the engine's real executors (see
+            // ChainManager::setPlaySpell for what the two hand-rolled copies
+            // that used to live here got wrong — the spell one silently
+            // mispriced [Flow] and Tomb plays, the permanent one paid full
+            // cost and put the card in the TRASH).
+            //
+            // Each executor adds its own chain item and re-enters runChain,
+            // which returns immediately while this loop is live
+            // (ChainManager::isProcessing), so the chain growing is the signal
+            // that the play happened. If nothing was added the intent was
+            // rejected as illegal — it pays nothing on that path, so priority
+            // simply stays where it is rather than restarting FEPR on an
+            // unchanged chain.
+            //
+            // executePlaySpell handles hand / trash-replay / [Flow] / the
+            // Sandswept Tomb restricted variant / the facedown spell reveal;
+            // executePlayCard handles [Quick-Draw] gear (its `targets` name
+            // the unit to attach to), [Ambush] and Rengar-style units (its
+            // `play_location` names the battlefield) and the facedown
+            // PERMANENT reveal (zone removal, the is_hidden / hidden_at
+            // clear, zero cost per CR 811, PlayedFromFacedownEvent).
+            const auto& exec_play = card.isSpell() ? play_spell_ : play_card_;
+            if (exec_play) {
+                const size_t before = state_.chain.items.size();
+                exec_play(chosen);
+                if (state_.chain.items.size() != before) {
+                    return true; // Item added → restart FEPR from Finalize
+                }
+                events_.logWarn("CHAIN: reaction play of " + card.name +
+                                " executed nothing — intent rejected");
+                continue;
+            }
+
+            // ── No executor injected: the bare-ChainManager fallback ──
+            //
+            // Only reachable from a unit test that drives processFEPR with no
+            // GameEngine behind it (tests/test_chain.cpp's FEPR-restart test
+            // and tests/cards/test_play_from_non_hand.cpp's facedown-reveal
+            // test both do exactly this, on purpose). The minimal SPELL play
+            // below serves those and nothing else — in a real game
+            // play_spell_ is always wired, so this is dead.
+            //
+            // There is deliberately NO permanent equivalent. Hand-rolling one
+            // is what produced the bug described on setPlaySpell: it needs
+            // location stamping from `play_location`, cost payment, the
+            // `onPlay` hook, the per-turn gear counters and target carry-over,
+            // all of which already live in GameEngine::executePlayCard. A
+            // permanent reaction with no executor is rejected loudly instead
+            // of quietly played wrong.
+            if (!card.isSpell()) {
+                events_.logWarn("CHAIN: no play executor injected — permanent "
+                                "reaction play of " + card.name + " rejected "
+                                "(wire ChainManager::setPlayCard)");
+                continue;
+            }
+
             auto& ps = state_.player(current);
+
+            // Play source is derived from the card's zone/hidden-status
+            // (Kennen spec §2/addendum #2) BEFORE is_hidden is cleared below.
+            // ChainManager can't call GameEngine::playSourceFor, so it uses
+            // the shared playSourceForZone helper directly, same as
+            // EffectExecutor::playIgnoringCost.
+            Intent::PlaySource event_play_source =
+                playSourceForZone(card.zone, card.is_hidden);
 
             if (card.is_hidden) {
                 // Playing from facedown — remove from BF facedown zone, no cost
@@ -258,7 +341,8 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             int energy_spent = (card.card_def_id != kInvalidId)
                 ? card_db_.get(card.card_def_id).energy_cost : 0;
             events_.emit(CardPlayedEvent{chosen.card, current,
-                card.card_type, ps.cards_played_this_turn, energy_spent});
+                card.card_type, ps.cards_played_this_turn, energy_spent,
+                event_play_source});
 
             // Add to chain with targets
             addSpell(chosen.card, current, chosen.targets);
@@ -287,67 +371,93 @@ void ChainManager::stepResolve(
     state_.chain.items.pop_back();
     state_.chain.resuming = resolved;
 
-    // Resumable resolution loop. Single-shot cards (the common case) loop
+    // Resumable resolution pump. Single-shot cards (the common case) loop
     // exactly once: resolve_spell -> Card::onResolve returns without a
     // pending choice, the while condition fails, we drop through to
     // disposal. Resumable cards (e.g. discard, predict, opponentDiscards)
     // publish a pending choice via `EffectExecutor::requestChoice` and set
     // `resuming->resume_point`; we then query the agent, record the choice
     // for the Card to read on re-entry, and re-call resolve_spell.
-    constexpr int kMaxResumeIterations = 16;
-    int iter = 0;
-    while (true) {
-        if (++iter > kMaxResumeIterations) {
-            // Safety bound — a Card stuck in a yield loop should never reach
-            // this. We bail out rather than spinning forever.
-            assert(false && "ChainManager::stepResolve: resume loop overflow");
-            break;
-        }
+    //
+    // Factored into a lambda because EVERY execution of the item — the base
+    // resolution and each paid [Repeat] tranche below — needs it. The Repeat
+    // loop used to call resolve_spell directly, so a resumable card only ever
+    // ran its `case 0` branch on a tranche: the effect never happened AND the
+    // choice it published stayed active in the executor, to be consumed by
+    // whatever card resolved next. Hard Bargain (457) — `[Reaction]` +
+    // `[Repeat] [2]`, live in the Closed State — and Called Shot (443) are
+    // the shipped cards with that shape.
+    //
+    // House style for the `resuming` slot, used consistently from here to the
+    // disposal below: read MEMBERS through `->`, but materialise the WHOLE
+    // item through the checked `.value()`. The distinction is not cosmetic —
+    // every member read sits immediately after the statement or guard that
+    // establishes the slot is populated, while the two whole-item reads
+    // (resolve_spell's argument, and the disposal) both follow arbitrary Card
+    // execution that could in principle have cleared it. `.value()`'s defined
+    // std::bad_optional_access is a better failure there than the undefined
+    // behaviour of `*`.
+    //
+    // Deliberately NO local reference is bound across a resolve_spell call —
+    // that call runs Card code which writes the slot (resume_point,
+    // resume_data), and a binding would invite someone to cache a stale copy.
+    auto runResolutionPump = [&]() {
+        constexpr int kMaxResumeIterations = 16;
+        int iter = 0;
+        while (true) {
+            if (++iter > kMaxResumeIterations) {
+                // Safety bound — a Card stuck in a yield loop should never
+                // reach this. We bail out rather than spinning forever.
+                assert(false && "ChainManager::stepResolve: resume loop overflow");
+                break;
+            }
 
-        // Re-invoke resolve_spell from `resuming`. The engine's resolveSpell
-        // dispatches through Card::onResolve / onTrigger based on
-        // is_spell / is_ability — both paths are reachable here.
-        if (resolved.is_spell || resolved.is_ability) {
-            resolve_spell(state_.chain.resuming.value());
-        }
-
-        if (!executor_ || !executor_->hasPendingChoice()) break;
-
-        auto pending = executor_->consumePendingChoice();
-        // Surface the labeled choice request in the trace BEFORE the
-        // agent picks. Pairs with the on_decision-callback-driven CHOSE
-        // logging downstream; gives a reader the WHY of a MakeChoice
-        // decision (e.g. "discard 1 (Lunar Boon)") instead of just the
-        // WHAT (e.g. "pick=[Hard Bargain(id=12)]"). Cards that don't pass
-        // a label fall back to a generic line.
-        events_.logTrace(
-            std::string("CHOICE-REQUEST: ") +
-            (pending.label.empty() ? "MakeChoice" : pending.label) +
-            " [" + std::to_string(pending.legal.size()) + " options] (" +
-            toString(pending.player) + ")");
-        Intent choice = query_agent(pending.player, pending.legal);
-        executor_->recordChoice(std::move(choice));
-        // Loop back — resolve_spell re-invokes onResolve / onTrigger; the
-        // Card reads the recorded choice via `executor.takeChoice()` in its
-        // case ≥1 branch and continues past resume_point.
-    }
-
-    // Repeat (CR 820): if `repeats_paid > 0`, re-run resolve_spell that
-    // many extra times. Each re-run reads the same item from
-    // state_.chain.resuming (still populated) — Cards see the same chain
-    // item and execute their effect again. Choices made during the extra
-    // executions follow the same Make-Relevant-Choices pattern (CR 820.2),
-    // but for now we re-use the original targets/resume_data (the
-    // simplification noted on ChainItem::repeats_paid).
-    if (state_.chain.resuming.has_value()) {
-        for (int r = 0; r < state_.chain.resuming->repeats_paid; ++r) {
-            // Reset resume_point so a resumable Card starts its case 0
-            // branch fresh on each repeat.
-            state_.chain.resuming->resume_point = 0;
-            state_.chain.resuming->resume_data.clear();
-            if (state_.chain.resuming->is_spell || state_.chain.resuming->is_ability) {
+            // Re-invoke resolve_spell from `resuming`. The engine's
+            // resolveSpell dispatches through Card::onResolve / onTrigger
+            // based on is_spell / is_ability — both paths are reachable here.
+            if (state_.chain.resuming->is_spell ||
+                state_.chain.resuming->is_ability) {
                 resolve_spell(state_.chain.resuming.value());
             }
+
+            if (!executor_ || !executor_->hasPendingChoice()) break;
+
+            auto pending = executor_->consumePendingChoice();
+            // Surface the labeled choice request in the trace BEFORE the
+            // agent picks. Pairs with the on_decision-callback-driven CHOSE
+            // logging downstream; gives a reader the WHY of a MakeChoice
+            // decision (e.g. "discard 1 (Lunar Boon)") instead of just the
+            // WHAT (e.g. "pick=[Hard Bargain(id=12)]"). Cards that don't pass
+            // a label fall back to a generic line.
+            events_.logTrace(
+                std::string("CHOICE-REQUEST: ") +
+                (pending.label.empty() ? "MakeChoice" : pending.label) +
+                " [" + std::to_string(pending.legal.size()) + " options] (" +
+                toString(pending.player) + ")");
+            Intent choice = query_agent(pending.player, pending.legal);
+            executor_->recordChoice(std::move(choice));
+            // Loop back — resolve_spell re-invokes onResolve / onTrigger; the
+            // Card reads the recorded choice via `executor.takeChoice()` in
+            // its case ≥1 branch and continues past resume_point.
+        }
+    };
+
+    runResolutionPump();
+
+    // Repeat (CR 820): if `repeats_paid > 0`, re-run the item that many extra
+    // times. Each re-run reads the same item from state_.chain.resuming
+    // (still populated) — Cards see the same chain item and execute their
+    // effect again — and goes through the SAME pump as the base resolution,
+    // so a resumable card can yield and consume a choice on every tranche
+    // (CR 820.2, Make Relevant Choices). Targets and the rest of the item are
+    // re-used as-is (the simplification noted on ChainItem::repeats_paid);
+    // only resume_point / resume_data are reset, so each tranche starts at
+    // the card's `case 0` branch with a clean slate.
+    if (state_.chain.resuming.has_value()) {
+        for (int r = 0; r < state_.chain.resuming->repeats_paid; ++r) {
+            state_.chain.resuming->resume_point = 0;
+            state_.chain.resuming->resume_data.clear();
+            runResolutionPump();
         }
     }
 
@@ -356,17 +466,29 @@ void ChainManager::stepResolve(
     state_.chain.resuming.reset();
 
     if (resolved.is_spell) {
-        // Spell goes to controller's trash after resolving (CR 359.3)
+        // Spell goes to controller's trash after resolving (CR 359.3) —
+        // UNLESS it was played for its Flow cost, in which case leaving the
+        // chain (and it wasn't instructed by its own execution) banishes it
+        // instead (CR 829.1.b.1).
         if (state_.objectExists(resolved.source)) {
             auto& spell_obj = state_.getObject(resolved.source);
-            spell_obj.zone = ZoneType::Trash;
             spell_obj.location = std::nullopt;
-            state_.player(resolved.controller).trash.push_back(resolved.source);
+            ZoneType destination = ZoneType::Trash;
+            if (resolved.banish_on_leave) {
+                destination = ZoneType::Banishment;
+                spell_obj.zone = ZoneType::Banishment;
+                spell_obj.is_empowered = false;  // CR 441.1.a
+                state_.player(resolved.controller).banishment.push_back(resolved.source);
+                events_.logTrace("FLOW: " + spell_obj.name + " banished");
+            } else {
+                spell_obj.zone = ZoneType::Trash;
+                state_.player(resolved.controller).trash.push_back(resolved.source);
+            }
 
             events_.emit(SpellResolvedEvent{resolved.source, resolved.controller});
             events_.emit(LeftBoardEvent{resolved.source, resolved.controller,
                 CardType::Spell, BaseLocation{resolved.controller},
-                ZoneType::Trash, false});
+                destination, false});
         }
     }
     // Triggered/activated abilities leave their source on the board — no

@@ -177,6 +177,7 @@ void EffectExecutor::killObject(GameObjectId target) {
         obj.location = std::nullopt;
         obj.damage_marked = 0;
         obj.combat_designation = CombatDesignation::None;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (!is_token) {
             state_.player(obj.owner).trash.push_back(target);
         } else {
@@ -194,6 +195,7 @@ void EffectExecutor::killObject(GameObjectId target) {
         obj.zone = is_token ? ZoneType::Banishment : ZoneType::Trash;
         obj.last_location = obj.location;
         obj.location = std::nullopt;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (!is_token) {
             state_.player(obj.owner).trash.push_back(target);
         } else {
@@ -215,37 +217,10 @@ void EffectExecutor::drawCards(PlayerId player, int count) {
     int drawn = 0;
     for (int i = 0; i < count; ++i) {
         if (ps.main_deck.empty()) {
-            // Burn Out (CR 431.2): recycle trash into deck, then opponent
-            // gains 1 point (CR 431.2.c — burning-out player chooses an
-            // opponent; in 1v1 there is exactly one). CR 431.3: if this
-            // gain puts opponent at or past victory score with more
-            // points than us, they win immediately.
+            // Burn Out (CR 431.2/431.3) — shared with burnCards().
             if (ps.trash.empty()) break;
-            ps.burned_out = true;
-            for (auto cid : ps.trash) {
-                state_.getObject(cid).zone = ZoneType::MainDeck;
-                ps.main_deck.push_back(cid);
-            }
-            ps.trash.clear();
-            if (rng_) {
-                std::shuffle(ps.main_deck.begin(), ps.main_deck.end(), *rng_);
-            }
-            PlayerId opp_id = opponent(player);
-            auto& opp_ps = state_.player(opp_id);
-            opp_ps.score++;
-            events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
-                             " deck empty, shuffled trash; " +
-                             toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
-                             std::to_string(opp_ps.score));
-            if (opp_ps.score >= state_.mode.victory_score &&
-                opp_ps.score > ps.score) {
-                state_.game_over = true;
-                state_.winner = opp_id;
-                state_.game_over_reason = std::string(toString(opp_id)) +
-                                           " wins via burn-out point (CR 431.3)";
-                events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
-                return;
-            }
+            burnOut(player);
+            if (state_.game_over) return;
             if (ps.main_deck.empty()) break;
         }
         auto card_id = ps.main_deck.back();
@@ -284,6 +259,7 @@ void EffectExecutor::bounceToHand(GameObjectId target) {
         obj.damage_marked = 0;
         obj.combat_designation = CombatDesignation::None;
         obj.is_exhausted = false;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         events_.emit(LeftBoardEvent{target, controller, obj.card_type,
             was_at.value_or(BaseLocation{controller}), ZoneType::Banishment, false});
         return;
@@ -295,6 +271,7 @@ void EffectExecutor::bounceToHand(GameObjectId target) {
     obj.damage_marked = 0;
     obj.combat_designation = CombatDesignation::None;
     obj.is_exhausted = false;
+    obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
     state_.player(obj.owner).hand.push_back(target);
 
     events_.emit(LeftBoardEvent{target, controller, obj.card_type,
@@ -579,6 +556,7 @@ void EffectExecutor::recycleCards(PlayerId /*effect_controller*/,
         auto& obj = state_.getObject(cid);
         obj.zone = ZoneType::MainDeck;
         obj.location = std::nullopt;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (obj.card_type == CardType::Rune) {
             obj.zone = ZoneType::RuneDeck;
             state_.player(obj.owner).rune_deck.insert(
@@ -617,6 +595,7 @@ void EffectExecutor::banishObject(GameObjectId target) {
 
     obj.zone = ZoneType::Banishment;
     obj.location = std::nullopt;
+    obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
     state_.player(obj.owner).banishment.push_back(target);
 
     events_.emit(LeftBoardEvent{target, controller, obj.card_type,
@@ -1062,7 +1041,8 @@ void EffectExecutor::predict(PlayerId player, int count) {
     }
 }
 
-std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int count) {
+std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int count,
+                                                          RestDestination rest) {
     auto& ps = state_.player(player);
     // Void Hatchling (341): peek top, may recycle before revealing (see revealUntil).
     if (ps.has_reveal_peek && !ps.main_deck.empty() && agent_query_) {
@@ -1135,6 +1115,13 @@ std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int c
                 obj.zone = ZoneType::Hand;
                 chosen_cards.push_back(card_id);
                 events_.logTrace("  CHOSE: draw " + obj.name);
+            } else if (rest == RestDestination::Trash) {
+                // Non-chosen cards go to trash in their revealed order
+                // (Lightning Rush — Kennen spec §6/addendum #4).
+                obj.zone = ZoneType::Trash;
+                obj.location = std::nullopt;
+                ps.trash.push_back(card_id);
+                events_.logTrace("  CHOSE: trash " + obj.name);
             } else {
                 // Recycle to bottom
                 ps.main_deck.insert(ps.main_deck.begin(), card_id);
@@ -1157,6 +1144,13 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
                                        std::optional<LocationId> location) {
     if (!state_.objectExists(card)) return;
     auto& obj = state_.getObject(card);
+
+    // Play source is derived from the card's zone (and hidden status)
+    // BEFORE the zone is overwritten below (Kennen spec §2/addendum #2).
+    // EffectExecutor can't call back into GameEngine::playSourceFor, so
+    // this mirrors that mapping via the shared playSourceForZone helper
+    // (core/intent.h) — defined once, consulted from both places.
+    Intent::PlaySource play_source = playSourceForZone(obj.zone, obj.is_hidden);
 
     // Landing zone: caller-supplied (CR 355.2.a — controller picks base
     // or a battlefield they control) or, by default, the controller's
@@ -1209,9 +1203,80 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
     LocationId final_loc = obj.location.value_or(BaseLocation{player});
 
     events_.emit(CardPlayedEvent{card, player, obj.card_type,
-        ps.cards_played_this_turn});
+        ps.cards_played_this_turn, /*energy_spent=*/0, play_source});
     events_.emit(EnteredBoardEvent{card, player, obj.card_type,
         final_loc, true});
+}
+
+// ── Empower / Disempower (CR 441, 442) ──
+void EffectExecutor::empowerObject(GameObjectId target) {
+    if (!state_.objectExists(target)) return;
+    auto& obj = state_.getObject(target);
+    if (obj.is_empowered) return;  // CR 441.1.c — already empowered, no-op
+    obj.is_empowered = true;
+    events_.logTrace("EMPOWER: " + obj.name);
+    events_.emit(ObjectEmpoweredEvent{target, obj.controller});
+}
+
+void EffectExecutor::disempowerObject(GameObjectId target) {
+    if (!state_.objectExists(target)) return;
+    auto& obj = state_.getObject(target);
+    if (!obj.is_empowered) return;  // CR 442.1.a.1 — not empowered, no-op
+    obj.is_empowered = false;
+    events_.logTrace("DISEMPOWER: " + obj.name);
+}
+
+// ── Burn N (CR 440) ──
+void EffectExecutor::burnOut(PlayerId player) {
+    // Burn Out (CR 431.2): recycle trash into deck, then opponent gains
+    // 1 point (CR 431.2.c — burning-out player chooses an opponent; in
+    // 1v1 there is exactly one). CR 431.3: if this gain puts opponent at
+    // or past victory score with more points than us, they win
+    // immediately. No-op if trash is also empty — nothing to recycle.
+    auto& ps = state_.player(player);
+    if (ps.trash.empty()) return;
+    ps.burned_out = true;
+    for (auto cid : ps.trash) {
+        state_.getObject(cid).zone = ZoneType::MainDeck;
+        ps.main_deck.push_back(cid);
+    }
+    ps.trash.clear();
+    if (rng_) {
+        std::shuffle(ps.main_deck.begin(), ps.main_deck.end(), *rng_);
+    }
+    PlayerId opp_id = opponent(player);
+    auto& opp_ps = state_.player(opp_id);
+    opp_ps.score++;
+    events_.logTrace(std::string("BURN_OUT: ") + toString(player) +
+                     " deck empty, shuffled trash; " +
+                     toString(opp_id) + " gains 1 point (CR 431.2.c) -> " +
+                     std::to_string(opp_ps.score));
+    if (opp_ps.score >= state_.mode.victory_score &&
+        opp_ps.score > ps.score) {
+        state_.game_over = true;
+        state_.winner = opp_id;
+        state_.game_over_reason = std::string(toString(opp_id)) +
+                                   " wins via burn-out point (CR 431.3)";
+        events_.emit(GameOverEvent{opp_id, state_.game_over_reason});
+    }
+}
+
+void EffectExecutor::burnCards(PlayerId player, int count) {
+    auto& ps = state_.player(player);
+    for (int i = 0; i < count; ++i) {
+        if (ps.main_deck.empty()) {
+            burnOut(player);
+            if (state_.game_over) return;
+            if (ps.main_deck.empty()) break;  // deck AND trash empty — stop
+        }
+        auto card_id = ps.main_deck.back();
+        ps.main_deck.pop_back();
+        auto& obj = state_.getObject(card_id);
+        obj.zone = ZoneType::Trash;
+        obj.location = std::nullopt;
+        ps.trash.push_back(card_id);
+        events_.logTrace("BURN: " + obj.name + " (id=" + std::to_string(card_id) + ")");
+    }
 }
 
 } // namespace riftbound

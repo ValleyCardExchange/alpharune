@@ -35,7 +35,13 @@ public:
 
     /// Add a permanent (unit/gear) to the chain as a Pending Item.
     /// Permanents resolve immediately on finalize (CR 337.1.c).
-    ChainItemId addPermanent(GameObjectId card_obj, PlayerId controller);
+    ///
+    /// `targets` are the objects the PLAY chose, carried onto the item so
+    /// GameEngine::resolvePermanent can read them back: a [Quick-Draw] gear
+    /// names the unit it attaches to as it enters (CR 819). Every other
+    /// permanent play leaves it empty, which is the default.
+    ChainItemId addPermanent(GameObjectId card_obj, PlayerId controller,
+                             const std::vector<GameObjectId>& targets = {});
 
     /// Add a triggered/activated ability to the chain. Source stays on
     /// board (not moved to chain zone). `is_activated` distinguishes
@@ -72,9 +78,56 @@ public:
     using AffordCheck = std::function<bool(PlayerId, GameObjectId)>;
     void setAffordCheck(AffordCheck check) { can_afford_ = std::move(check); }
 
-    /// Set cost payment callback (injected from GameEngine).
+    /// Set cost payment callback (injected from GameEngine). Used only by the
+    /// bare-ChainManager spell fallback in stepExecuteAndPass — the injected
+    /// executors below pay their own costs.
     using PayCost = std::function<bool(PlayerId, GameObjectId)>;
     void setPayCost(PayCost pay) { pay_cost_ = std::move(pay); }
+
+    /// Set the play executors (injected from GameEngine —
+    /// GameEngine::executePlaySpell and GameEngine::executePlayCard).
+    ///
+    /// Closed-State [Reaction] offers are answered HERE, in
+    /// stepExecuteAndPass: `GameEngine::executeIntent` also has a
+    /// PlayReaction case, but that one serves the SHOWDOWN decision path
+    /// (resolveShowdownDecision) and never sees a closed-state offer, because
+    /// nothing in this class calls executeIntent. The two paths are disjoint,
+    /// and both end in the SAME two executors — which is the point of these
+    /// callbacks.
+    ///
+    /// Both halves used to be hand-rolled here instead, and both were wrong.
+    /// The spell copy paid via payCardCost only (no [Flow], no Sandswept Tomb
+    /// staging), looked for the card in `PlayerState::hand` alone (so a
+    /// trash-replay or [Flow] play was never removed from the trash and the
+    /// disposal pushed a DUPLICATE trash entry), never set `banish_on_leave`,
+    /// never consumed a granted Flow and never stamped
+    /// `target_battlefield_restriction`. The non-spell copy ended in
+    /// `addSpell`, which sets `is_spell` — so a [Quick-Draw] gear, an
+    /// [Ambush] / Rengar unit or a facedown PERMANENT was paid for, skipped
+    /// CR 337.1.c's finalize-time resolution, ran through Card::onResolve (a
+    /// no-op on a permanent) and was disposed into the TRASH instead of
+    /// reaching the board.
+    ///
+    /// Each executor adds its own chain item and re-enters
+    /// GameEngine::runChain, which returns immediately while this loop is live
+    /// (see isProcessing).
+    using PlaySpell = std::function<void(const Intent&)>;
+    void setPlaySpell(PlaySpell play) { play_spell_ = std::move(play); }
+
+    /// @see setPlaySpell — the non-spell half (units, gear, facedown
+    /// permanents), routed to GameEngine::executePlayCard.
+    using PlayCard = std::function<void(const Intent&)>;
+    void setPlayCard(PlayCard play) { play_card_ = std::move(play); }
+
+    /// True while processFEPR is running.
+    ///
+    /// GameEngine::executePlaySpell ends by calling GameEngine::runChain, and
+    /// the routed closed-state play calls it from INSIDE this loop. The
+    /// engine consults this so the nested call adds its chain item and
+    /// returns instead of starting a second FEPR loop that would resolve the
+    /// chain out from under the outer one (stepExecuteAndPass already
+    /// restarts at Finalize once an item is added).
+    bool isProcessing() const { return processing_; }
 
     /// Inject the EffectExecutor so stepResolve can detect mid-resolution
     /// pending choices published by Card::onResolve / onTrigger via
@@ -90,7 +143,10 @@ private:
     const CardDB& card_db_;
     AffordCheck can_afford_;
     PayCost pay_cost_;
+    PlaySpell play_spell_;
+    PlayCard play_card_;
     EffectExecutor* executor_ = nullptr;
+    bool processing_ = false;
 
     /// Step 1: Finalize all pending items in order.
     /// Returns true if any items were finalized.
