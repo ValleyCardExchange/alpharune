@@ -1871,6 +1871,15 @@ void GameEngine::executePlaySpell(const Intent& intent) {
             ps.next_spell_bonus_damage = 0;
         }
     }
+    // "When you play a card from face down" (Katarina, Reckless 462). This is
+    // the LIVE reveal path — the event fires here, beside the CardPlayedEvent
+    // for the same play, and precedes it so a subscriber that reads both sees
+    // the facedown fact first (the ordering the removed, never-called
+    // executePlayFromHidden used, and the only place this event was emitted
+    // from before — so it never fired in a real game).
+    if (hidden_play) {
+        events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
+    }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
         card.card_type, ps.cards_played_this_turn, total_energy_spent, event_play_source});
 
@@ -2369,49 +2378,6 @@ void GameEngine::executeHideCard(const Intent& intent) {
 
     // "When you hide a card" (Katarina, Reckless).
     events_.emit(CardHiddenEvent{intent.card, intent.player});
-}
-
-void GameEngine::executePlayFromHidden(const Intent& intent) {
-    auto& card = state_.getObject(intent.card);
-    auto bf_id = card.hidden_at;
-    auto& bf = getBattlefield(bf_id);
-
-    // Remove from facedown zone
-    auto it = std::find(bf.facedown.begin(), bf.facedown.end(), intent.card);
-    if (it != bf.facedown.end()) bf.facedown.erase(it);
-
-    // Play source captured BEFORE is_hidden is cleared below (Kennen spec
-    // §2/addendum #2) — playSourceFor keys off is_hidden for a facedown
-    // reveal, so it must run while the card is still marked hidden.
-    Intent::PlaySource play_source = playSourceFor(card);
-
-    card.is_hidden = false;
-    card.hidden_at = kInvalidId;
-
-    // "When you play a card from face down" (Katarina, Reckless).
-    events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
-
-    // Play ignoring base cost — permanents go to the BF they were hidden at
-    if (card.isPermanent()) {
-        card.location = BattlefieldLocation{bf_id};
-        // Route through chain like normal plays
-        auto& ps = state_.player(intent.player);
-        ps.cards_played_this_turn++;
-        // Hidden play is "ignoring its base cost" (CR 811) — energy_spent = 0.
-        events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0,
-            play_source});
-        chain_manager_->addPermanent(intent.card, intent.player);
-        runChain();
-    } else if (card.isSpell()) {
-        auto& ps = state_.player(intent.player);
-        ps.cards_played_this_turn++;
-        events_.emit(CardPlayedEvent{intent.card, intent.player,
-            card.card_type, ps.cards_played_this_turn, /*energy_spent=*/0,
-            play_source});
-        chain_manager_->addSpell(intent.card, intent.player, intent.targets);
-        runChain();
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3002,8 +2968,7 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                 }
             }
 
-            // No-target hidden play (or permanent — its location is set
-            // to the hidden-at BF by executePlayFromHidden).
+            // No-target hidden play (spell or permanent).
             Intent play;
             play.type = IntentType::PlayReaction;
             play.player = player;

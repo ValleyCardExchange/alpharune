@@ -26,7 +26,11 @@
 ///   (c) Star-Crossed (690) played closed as a restricted Sandswept Tomb
 ///       (792) offer pays the discounted power and narrows the pair picker;
 ///   (d) a plain hand [Reaction] play still behaves exactly as before
-///       (regression).
+///       (regression);
+///   (e) a real facedown reveal through the chain emits
+///       `PlayedFromFacedownEvent` (Katarina 462's WhenYouPlayFromFacedown) —
+///       review finding #4: before the fix the only emit site was the dead
+///       `GameEngine::executePlayFromHidden`, so the event never fired live.
 
 #include "tests/cards/card_test_fixture.h"
 
@@ -533,4 +537,76 @@ TEST_F(ClosedStatePlaysTest, ClosedHandReactionPlayStillPaysAndTrashes) {
     EXPECT_EQ(played[1].object, spell);
     EXPECT_EQ(played[1].play_source, Intent::PlaySource::Hand);
     EXPECT_EQ(played[1].energy_spent, 1);
+}
+
+// ─── (e) A live facedown reveal emits PlayedFromFacedownEvent ──────────────
+
+TEST_F(ClosedStatePlaysTest, LiveHiddenRevealEmitsPlayedFromFacedownEvent) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+
+    // A card hidden on an EARLIER turn — CR 811.1.d: it gains [Reaction] the
+    // turn after it was hidden, which is what makes it a legal closed-state
+    // play at all.
+    auto spell = addToZoneIn(s, P1, kHiddenSpell, ZoneType::Hand);
+    {
+        auto& ph = s.player(P1).hand;
+        ph.erase(std::remove(ph.begin(), ph.end(), spell), ph.end());
+        auto& c = s.getObject(spell);
+        c.zone = ZoneType::FacedownZone;
+        c.location = std::nullopt;
+        c.is_hidden = true;
+        c.hidden_at = 0;
+        c.hidden_on_turn = s.turn.turn_number - 1;
+        s.battlefields[0].facedown.push_back(spell);
+    }
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == spell;
+    };
+
+    std::vector<PlayedFromFacedownEvent> facedown;
+    auto fd = events.on_played_from_facedown.connect(
+        [&](const PlayedFromFacedownEvent& e) { facedown.push_back(e); });
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: a card hidden last turn must be offered as a closed-state "
+           "play.";
+
+    ASSERT_EQ(facedown.size(), 1u)
+        << "CR 811 — revealing and playing a facedown card is 'playing a card "
+           "from face down'. Katarina, Reckless (462) triggers on it, so the "
+           "LIVE reveal path must emit PlayedFromFacedownEvent exactly once.";
+    EXPECT_EQ(facedown[0].card, spell);
+    EXPECT_EQ(facedown[0].player, P1);
+
+    EXPECT_TRUE(s.battlefields[0].facedown.empty())
+        << "the revealed card leaves the facedown zone";
+    EXPECT_FALSE(s.getObject(spell).is_hidden);
+
+    ASSERT_EQ(played.size(), 2u);
+    EXPECT_EQ(played[1].object, spell);
+    EXPECT_EQ(played[1].play_source, Intent::PlaySource::Hidden)
+        << "the play source is derived from the facedown status the card had "
+           "when it was played";
+    EXPECT_EQ(played[1].energy_spent, 0)
+        << "CR 811 — a card played from face down is played IGNORING its base "
+           "cost, so nothing was spent on it.";
+    EXPECT_EQ(countExhausted(s, P1), 0)
+        << "no rune may be exhausted for a facedown reveal";
+    EXPECT_EQ(countIn(s.player(P1).trash, spell), 1)
+        << "the revealed spell trashes as it leaves the chain";
 }

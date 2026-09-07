@@ -507,7 +507,9 @@ private:
     void executeAssignCombatDamage(const Intent& intent);
     void executePassFocus(const Intent& intent);
     void executeHideCard(const Intent& intent);
-    void executePlayFromHidden(const Intent& intent);
+    // No executePlayFromHidden: the facedown reveal (CR 811) is offered as a
+    // Closed-State PlayReaction and executed by executePlaySpell (spells) or
+    // ChainManager::stepExecuteAndPass (permanents).
 
     // ── Chain ──
     void runChain();

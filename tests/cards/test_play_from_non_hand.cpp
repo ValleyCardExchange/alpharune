@@ -15,10 +15,8 @@
 /// the trigger with play_source == ChampionZone.
 ///
 /// Fix round 1 (controller-widened scope): a hidden card revealed and
-/// played as a reaction goes through the LIVE CR 811 path,
-/// `ChainManager::stepExecuteAndPass` (src/engine/chain_manager.cpp) —
-/// NOT `GameEngine::executePlayFromHidden`, which nothing in src/ or
-/// tests/ calls (dead code, left as-is per the controller's ruling).
+/// played as a reaction arrives at the LIVE CR 811 path,
+/// `ChainManager::stepExecuteAndPass` (src/engine/chain_manager.cpp).
 /// Drives `ChainManager` + a hand-wired `TriggerManager` directly (no
 /// full `GameEngine`, mirroring `driveThroughChain`'s shape in
 /// card_test_fixture.h, since that helper doesn't cover the
@@ -354,12 +352,15 @@ TEST_F(PlayFromNonHandTest, ChampionPlayedFromChampionZoneFiresWithChampionZoneS
 // ─── Fix round 1: the LIVE hidden-reveal-as-reaction path ──────────────────
 
 TEST_F(PlayFromNonHandTest, HiddenCardRevealedAsReactionFiresWithHiddenSource) {
-    // The real CR 811 facedown-reveal-as-reaction path is
-    // ChainManager::stepExecuteAndPass: a hidden card is offered as a
-    // PlayReaction intent while still facedown, and the branch handles
-    // everything (unhide, track play, emit CardPlayedEvent, add to
-    // chain) inside ChainManager itself — GameEngine::executePlayFromHidden
-    // is a separate, dead code path (nothing in src/ or tests/ calls it).
+    // The CR 811 facedown-reveal-as-reaction offer arrives at
+    // ChainManager::stepExecuteAndPass as a PlayReaction intent while the
+    // card is still facedown. This test drives ChainManager DIRECTLY, with no
+    // GameEngine and therefore no injected play-spell callback, so it
+    // exercises ChainManager's own branch (unhide, track play, emit
+    // CardPlayedEvent, add to chain). In a real game the spell half of that
+    // branch is routed to GameEngine::executePlaySpell instead — the
+    // end-to-end reveal, including PlayedFromFacedownEvent, is covered by
+    // tests/cards/test_closed_state_plays.cpp.
     //
     // No full GameEngine here: ChainManager + a directly-wired
     // TriggerManager, bound to the fixture's own state/events/card_db,
