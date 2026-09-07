@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include "cards/card_registry.h"
+#include "core/card_db.h"
 #include "core/game_object.h"
 #include "core/game_state.h"
 #include "core/intent.h"
@@ -308,7 +310,7 @@ TEST(ActionVocab, TriggerResponses) {
 
 TEST(ActionVocab, SlotsInRange) {
     MiniState ms;
-    auto card = ms.addObject(/*def_id=*/787);  // highest registered id
+    auto card = ms.addObject(/*def_id=*/kNumCardDefIds);  // highest registered id
     Intent i;
     i.type = IntentType::PlayCard;
     i.player = PlayerId::Player1;
@@ -316,6 +318,28 @@ TEST(ActionVocab, SlotsInRange) {
     int id = encodeAction(i, ms.state);
     EXPECT_GE(id, 0);
     EXPECT_LT(id, kVocabSize);
+}
+
+// ── Registry guard: kNumCardDefIds must track the live registry ───────────
+//
+// cardDefSlot() (action_vocab.cpp) returns -1 for any def id above
+// kNumCardDefIds, and every def-keyed verb (Play, HideCard,
+// ActivateAbility, MakeChoice, ...) silently falls back to that verb's
+// slot 0 in that case (see cardDefSlot's doc comment). A card added to
+// the registry without bumping kNumCardDefIds becomes invisible to the
+// action vocab — the agent can never distinguish it from whatever else
+// aliases slot 0. This test fails LOUD the moment the two drift apart.
+TEST(ActionVocab, RegistrySizeMatchesConstant) {
+    CardRegistry registry;
+    registry.loadAll();
+    CardDB db;
+    db.buildFromClasses(registry);
+    EXPECT_EQ(kNumCardDefIds, static_cast<int>(db.size()))
+        << "kNumCardDefIds (action_vocab.h) is " << kNumCardDefIds
+        << " but the registry now holds " << db.size()
+        << " cards. Bump kNumCardDefIds or new cards silently collapse "
+           "onto the Play/HideCard/ActivateAbility/MakeChoice slot-0 "
+           "fallback.";
 }
 
 TEST(ActionVocab, DistinctCardsDistinctSlots) {
@@ -358,6 +382,145 @@ TEST(ActionVocab, VerbBucketsAreDisjoint) {
     EXPECT_NE(hide_slot, activate_slot);
 }
 
+// ── Distinct Flow / Tomb offer verbs (Task 11) ─────────────────────────────
+//
+// A printed-Flow offer, a granted-Flow offer, a Tomb-restricted offer and
+// the plain hand offer for the SAME card must land on four distinct
+// vocab slots — decodeAction picks the FIRST legal intent whose encode
+// matches, so when all four are simultaneously legal (CR 829.1.c.3 lets
+// a controller choose which Flow cost to pay), collapsing them onto one
+// slot means the agent can never deliberately choose the granted-Flow or
+// restricted offer while the plain one is also legal.
+TEST(ActionVocab, FlowAndTombOffersEncodeToDistinctSlots) {
+    MiniState ms;
+    auto card = ms.addObject(/*def_id=*/100);
+    auto bf = ms.addBattlefield();
+
+    Intent plain;
+    plain.type = IntentType::PlayCard;
+    plain.player = PlayerId::Player1;
+    plain.card = card;
+
+    Intent printed_flow = plain;
+    printed_flow.flow_source = Intent::FlowSource::Printed;
+
+    Intent granted_flow = plain;
+    granted_flow.flow_source = Intent::FlowSource::Granted;
+
+    Intent tomb_restricted = plain;
+    tomb_restricted.target_battlefield_restriction = bf;
+
+    int plain_slot     = encodeAction(plain, ms.state);
+    int printed_slot    = encodeAction(printed_flow, ms.state);
+    int granted_slot     = encodeAction(granted_flow, ms.state);
+    int restricted_slot = encodeAction(tomb_restricted, ms.state);
+
+    // id stability: the plain-Play slot for def_id=100 is unchanged by
+    // this task's changes. Recorded pre-change (kNumCardDefIds=787,
+    // verbOffset(Play)=154): 154 + (100-1) = 253. Play's offset does not
+    // depend on kNumCardDefIds (Play precedes any def-id-sized verb in
+    // the enum other than itself), so this holds after the 787→792 bump
+    // too — asserted here via verbOffset directly rather than a bare
+    // literal, so a genuine reordering of the enum still fails loudly.
+    EXPECT_EQ(plain_slot, verbOffset(ActionVerb::Play) + 99);
+
+    for (int id : {plain_slot, printed_slot, granted_slot, restricted_slot}) {
+        EXPECT_GE(id, 0);
+        EXPECT_LT(id, kVocabSize);
+    }
+
+    EXPECT_NE(plain_slot, printed_slot);
+    EXPECT_NE(plain_slot, granted_slot);
+    EXPECT_NE(plain_slot, restricted_slot);
+    EXPECT_NE(printed_slot, granted_slot);
+    EXPECT_NE(printed_slot, restricted_slot);
+    EXPECT_NE(granted_slot, restricted_slot);
+}
+
+// A restricted Tomb offer that is ALSO a Flow offer (both fields set —
+// the spec's "both may be live at once" case, CR 829.1.c.3) goes to the
+// Tomb verb: target_battlefield_restriction takes precedence over
+// flow_source in encodeAction. Documented in action_vocab.cpp.
+TEST(ActionVocab, RestrictedFlowOfferPrefersTombVerb) {
+    MiniState ms;
+    auto card = ms.addObject(/*def_id=*/100);
+    auto bf = ms.addBattlefield();
+
+    Intent restricted_and_flow;
+    restricted_and_flow.type = IntentType::PlayCard;
+    restricted_and_flow.player = PlayerId::Player1;
+    restricted_and_flow.card = card;
+    restricted_and_flow.flow_source = Intent::FlowSource::Printed;
+    restricted_and_flow.target_battlefield_restriction = bf;
+
+    Intent plain_restricted;
+    plain_restricted.type = IntentType::PlayCard;
+    plain_restricted.player = PlayerId::Player1;
+    plain_restricted.card = card;
+    plain_restricted.target_battlefield_restriction = bf;
+
+    EXPECT_EQ(encodeAction(restricted_and_flow, ms.state),
+              encodeAction(plain_restricted, ms.state))
+        << "a Flow-sourced Tomb-restricted offer must land on the Tomb "
+           "verb, same as a plain Tomb-restricted offer, per the "
+           "documented precedence.";
+}
+
+// Decode round-trip: a legal-action list containing all four offers for
+// the same card decodes each slot back to the intent carrying the
+// matching flow_source / restriction, not just the first (plain) one.
+TEST(ActionVocab, DecodeDistinguishesFlowAndTombOffersInLegalList) {
+    MiniState ms;
+    auto card = ms.addObject(/*def_id=*/100);
+    auto bf = ms.addBattlefield();
+
+    Intent plain;
+    plain.type = IntentType::PlayCard;
+    plain.player = PlayerId::Player1;
+    plain.card = card;
+
+    Intent printed_flow = plain;
+    printed_flow.flow_source = Intent::FlowSource::Printed;
+
+    Intent granted_flow = plain;
+    granted_flow.flow_source = Intent::FlowSource::Granted;
+
+    Intent tomb_restricted = plain;
+    tomb_restricted.target_battlefield_restriction = bf;
+
+    // Plain offer listed FIRST — the pre-Task-11 bug always returned this
+    // one for every slot, since decodeAction picks the first match and
+    // all four intents used to share one slot.
+    std::vector<Intent> legal = {plain, printed_flow, granted_flow, tomb_restricted};
+
+    int plain_slot      = encodeAction(plain, ms.state);
+    int printed_slot     = encodeAction(printed_flow, ms.state);
+    int granted_slot      = encodeAction(granted_flow, ms.state);
+    int restricted_slot  = encodeAction(tomb_restricted, ms.state);
+
+    const Intent* decoded_plain      = decodeAction(plain_slot, legal, ms.state);
+    const Intent* decoded_printed    = decodeAction(printed_slot, legal, ms.state);
+    const Intent* decoded_granted    = decodeAction(granted_slot, legal, ms.state);
+    const Intent* decoded_restricted = decodeAction(restricted_slot, legal, ms.state);
+
+    ASSERT_NE(decoded_plain, nullptr);
+    ASSERT_NE(decoded_printed, nullptr);
+    ASSERT_NE(decoded_granted, nullptr);
+    ASSERT_NE(decoded_restricted, nullptr);
+
+    EXPECT_EQ(decoded_plain->flow_source, Intent::FlowSource::None);
+    EXPECT_FALSE(decoded_plain->target_battlefield_restriction.has_value());
+
+    EXPECT_EQ(decoded_printed->flow_source, Intent::FlowSource::Printed);
+    EXPECT_FALSE(decoded_printed->target_battlefield_restriction.has_value());
+
+    EXPECT_EQ(decoded_granted->flow_source, Intent::FlowSource::Granted);
+    EXPECT_FALSE(decoded_granted->target_battlefield_restriction.has_value());
+
+    EXPECT_TRUE(decoded_restricted->target_battlefield_restriction.has_value());
+    EXPECT_EQ(*decoded_restricted->target_battlefield_restriction, bf);
+}
+
 TEST(ActionVocab, CollapsingPlayVariantsAliasIntentionally) {
     // PlayCard / PlayReaction / PlayActionCard with same card_def_id are
     // semantically the same decision once the engine has decided the
@@ -380,8 +543,12 @@ TEST(ActionVocab, CollapsingPlayVariantsAliasIntentionally) {
 }
 
 TEST(ActionVocab, VocabSizeIsReasonable) {
-    // Should be ~7000 (≈ 9 buckets × 787 cards + small singletons).
-    // Sanity: not insanely small (< 1000) and not insanely large (> 100k).
+    // Task 11 (Kennen: 792-card registry + 3 new Flow/Tomb offer verbs)
+    // grew this from ~9600 to ~12000 (≈ 12 buckets × 792 cards, several
+    // of them ActivateAbility-scaled, + small singletons). No trained
+    // AlphaZero policy head exists in this fork, so a vocab-size change
+    // here is acceptable — this is a loose sanity bound, not a numeric
+    // pin: not insanely small (< 1000) and not insanely large (> 100k).
     EXPECT_GT(kVocabSize, 1000);
     EXPECT_LT(kVocabSize, 100000);
 }

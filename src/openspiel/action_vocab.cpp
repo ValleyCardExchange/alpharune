@@ -98,12 +98,39 @@ int encodeAction(const Intent& intent, const GameState& state) {
                    + playLocBfSlot(intent.move_destination);
 
         // ── Play-family (collapsed) ──────────────────────────────────────
+        //
+        // Task 11 — a plain hand offer, a printed-Flow offer, a
+        // granted-Flow offer, and a Sandswept-Tomb-restricted offer for
+        // the SAME card are all separately legal at once (CR 829.1.c.3:
+        // "both may be live at once, in which case the generator emits
+        // one intent per cost and the controller chooses"). Route each
+        // to its own verb so decodeAction's first-match scan can surface
+        // any of them, not just whichever happens to come first.
+        //
+        // Precedence when BOTH target_battlefield_restriction and
+        // flow_source are set (a restricted offer that is also a Flow
+        // offer): the Tomb verb wins. Rationale — the restriction is the
+        // rarer, more specific commitment (it also locks the play's unit
+        // target(s) to one battlefield, CR Sandswept Tomb), so collapsing
+        // it into a Flow verb would hide that commitment from the vocab;
+        // a plain Play offer with the restriction would instead alias
+        // with an unrestricted Flow play of the same card. The card's
+        // own Flow-cost intent (flow_source set, restriction unset)
+        // still gets its own PlayFlowPrinted/PlayFlowGranted slot.
         case T::PlayCard:
         case T::PlayActionCard:
         case T::PlayReaction: {
+            ActionVerb verb = ActionVerb::Play;
+            if (intent.target_battlefield_restriction.has_value()) {
+                verb = ActionVerb::PlayTombRestricted;
+            } else if (intent.flow_source == Intent::FlowSource::Printed) {
+                verb = ActionVerb::PlayFlowPrinted;
+            } else if (intent.flow_source == Intent::FlowSource::Granted) {
+                verb = ActionVerb::PlayFlowGranted;
+            }
             int s = cardDefSlot(defIdOf(state, intent.card));
-            if (s < 0) return verbBase(ActionVerb::Play);  // fallback to slot 0
-            return verbBase(ActionVerb::Play) + s;
+            if (s < 0) return verbBase(verb);  // fallback to that verb's slot 0
+            return verbBase(verb) + s;
         }
 
         // ── HideCard ─────────────────────────────────────────────────────

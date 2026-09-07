@@ -13,7 +13,10 @@
 ///   ActivateAbility / *ReactionAbility / *ActionAbility → ActivateAbility
 ///
 /// And maps each remaining bucket to a primary key:
-///   Play / HideCard / ActivateAbility   → card_def_id (1..787)
+///   Play / HideCard / ActivateAbility   → card_def_id (1..kNumCardDefIds)
+///   PlayFlowPrinted / PlayFlowGranted /
+///     PlayTombRestricted                → card_def_id (distinct verbs from
+///                                          plain Play — see Task 11 below)
 ///   MakeChoice                          → first chosen def_id (0 = none)
 ///   StandardMove / ChooseBattlefield    → battlefield slot (0..7)
 ///   AssignCombatDamage                  → distribution kind (0..3)
@@ -38,8 +41,13 @@
 namespace riftbound::openspiel {
 
 /// Card def ids are 1-indexed in the registry. Highest registered id today
-/// is 787; bump this if the registry grows.
-constexpr int kNumCardDefIds = 787;
+/// is 792 (Kennen: Kennen, Lightning Rush, Up from the Deep, Heart of the
+/// Tempest, and Sandswept Tomb); bump this if the registry grows. Guarded
+/// by ActionVocab.RegistrySizeMatchesConstant (tests/test_action_vocab.cpp),
+/// which asserts this constant equals the live CardRegistry/CardDB card
+/// count so a future card without a bump fails the suite instead of
+/// silently falling back to slot 0 (see cardDefSlot()).
+constexpr int kNumCardDefIds = 792;
 
 /// Reserved slot count for integer-coded MakeChoice answers
 /// (Intent::chosen_value). Used by card.cpp helpers — confirmOptional
@@ -120,6 +128,29 @@ enum class ActionVerb : uint8_t {
     PayTriggeredCost,          // arity kNumCardDefIds
     DeclineTriggeredCost,      // arity kNumCardDefIds
     SideboardSwap,             // arity kNumCardDefIds (out def id)
+
+    // Task 11 (Kennen: Sandswept Tomb / Flow fixes) — distinct Flow / Tomb
+    // offer verbs. Play-family intents previously keyed on card slot only,
+    // so a printed-Flow offer, a granted-Flow offer, a Tomb-restricted
+    // offer and the plain hand offer for the same card all aliased to one
+    // Play slot; decodeAction (first-match) could only ever surface the
+    // plain offer. Appended at the END of the enum (before Count) so every
+    // pre-existing slot id is unchanged — see action_vocab.cpp's
+    // Play-family case for the precedence when both flow_source and
+    // target_battlefield_restriction are set.
+    PlayFlowPrinted,           // arity kNumCardDefIds (Intent::flow_source == Printed)
+    PlayFlowGranted,           // arity kNumCardDefIds (Intent::flow_source == Granted)
+    PlayTombRestricted,        // arity kNumCardDefIds (Intent::target_battlefield_restriction set)
+                               // The restriction's battlefield id is NOT
+                               // separately encoded: only one Tomb can
+                               // exist per game (Sandswept Tomb, VEN), so
+                               // the card slot alone disambiguates the
+                               // offer. If a future effect ever creates a
+                               // second restricted battlefield in the
+                               // same game, the first eligible restricted
+                               // offer wins ties in decodeAction's
+                               // first-match scan (documented, not
+                               // expected to matter today).
     Count,
 };
 
@@ -148,6 +179,9 @@ constexpr int verbArity(ActionVerb v) {
         case ActionVerb::PayTriggeredCost:        return kNumCardDefIds;
         case ActionVerb::DeclineTriggeredCost:    return kNumCardDefIds;
         case ActionVerb::SideboardSwap:           return kNumCardDefIds;
+        case ActionVerb::PlayFlowPrinted:         return kNumCardDefIds;
+        case ActionVerb::PlayFlowGranted:         return kNumCardDefIds;
+        case ActionVerb::PlayTombRestricted:      return kNumCardDefIds;
         case ActionVerb::Count:                   return 0;
     }
     return 0;
