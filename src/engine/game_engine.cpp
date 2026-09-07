@@ -53,12 +53,16 @@ void GameEngine::initSubsystems() {
         [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
     chain_manager_->setPayCost(
         [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
-    // Closed-State [Reaction] plays of SPELLS run through the ONE spell-play
-    // executor (see ChainManager::setPlaySpell). Without this the chain's own
-    // thin copy pays the printed cost for a [Flow] play, leaves the card in
-    // the trash, and drops the Sandswept Tomb restriction on the floor.
+    // Closed-State [Reaction] plays run through the SAME two executors every
+    // other play uses (see ChainManager::setPlaySpell). Without these the
+    // chain's own thin copies pay the printed cost for a [Flow] play, leave
+    // the card in the trash and drop the Sandswept Tomb restriction on the
+    // floor — and, for a permanent, pay full cost and then dispose the card
+    // into the trash instead of putting it on the board.
     chain_manager_->setPlaySpell(
         [this](const Intent& i) { executePlaySpell(i); });
+    chain_manager_->setPlayCard(
+        [this](const Intent& i) { executePlayCard(i); });
     effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
     effect_executor_->setRng(&rng_);
     effect_executor_->setAgentQuery(
@@ -1314,17 +1318,40 @@ void GameEngine::executePlayCard(const Intent& intent) {
 
     // Play source is derived from the card's zone BEFORE it's removed
     // below (Kennen spec §2/addendum #2) — Hand for a normal hand play,
-    // ChampionZone for a champion play. Named event_play_source (not
-    // play_source) so it doesn't shadow-by-name intent.play_source
-    // below, which drives current_play_source/cost-payment concerns and
-    // can legitimately differ. Capture-before-mutation is kept here even
-    // though this function's own zone-removal block doesn't touch
-    // card.zone itself (only ps.hand/ps.champion_zone) — cheap insurance
-    // against a future change to that block silently breaking this.
+    // ChampionZone for a champion play, Hidden for a facedown reveal
+    // (keyed off `card.is_hidden`, which the removal block below clears).
+    // Named event_play_source (not play_source) so it doesn't
+    // shadow-by-name intent.play_source below, which drives
+    // current_play_source/cost-payment concerns and can legitimately differ.
     Intent::PlaySource event_play_source = playSourceFor(card);
 
-    // Remove from current zone (hand or champion zone) (CR 354: step 1)
-    if (card.zone == ZoneType::Hand) {
+    // ── Facedown reveal of a PERMANENT (CR 811) ──
+    //
+    // A card hidden at a battlefield gains [Reaction] the turn after it was
+    // hidden and is offered as a closed-state PlayReaction while still face
+    // down; ChainManager routes the NON-SPELL half here, the mirror of the
+    // spell half executePlaySpell already handles. Read the status BEFORE the
+    // removal block clears it: it suppresses every cost path (CR 811 — the
+    // card is played IGNORING its base cost), zeroes the reported energy, and
+    // gates the PlayedFromFacedownEvent that Katarina, Reckless (585) triggers
+    // on. `hidden_from` is the battlefield it was face down at, captured for
+    // the landing-location default below.
+    const bool hidden_play = card.is_hidden;
+    const BattlefieldId hidden_from = card.hidden_at;
+
+    // Remove from current zone (facedown zone, hand or champion zone)
+    // (CR 354: step 1)
+    if (hidden_play) {
+        for (auto& bf : state_.battlefields) {
+            auto fit = std::find(bf.facedown.begin(), bf.facedown.end(),
+                                  intent.card);
+            if (fit == bf.facedown.end()) continue;
+            bf.facedown.erase(fit);
+            break;
+        }
+        card.is_hidden = false;
+        card.hidden_at = kInvalidId;
+    } else if (card.zone == ZoneType::Hand) {
         auto it = std::find(ps.hand.begin(), ps.hand.end(), intent.card);
         if (it != ps.hand.end()) ps.hand.erase(it);
     } else if (card.zone == ZoneType::ChampionZone) {
@@ -1339,8 +1366,11 @@ void GameEngine::executePlayCard(const Intent& intent) {
     // do, reduce my cost by [2]." Decided BEFORE payment so the discount applies;
     // staged into transient_play_discount (consumed by payCardCost) and cleared
     // after. Skipped on an alternative-cost play.
+    // A facedown reveal skips this whole section: CR 811 plays the card
+    // IGNORING its base cost, which takes the optional additional costs that
+    // modify that base cost with it.
     int prepay_discount = 0;
-    if (!intent.use_alt_play_cost) {
+    if (!hidden_play && !intent.use_alt_play_cost) {
         const Card* pc = card.card_def_id != kInvalidId
             ? card_registry_.get(card.card_def_id) : nullptr;
         Card::OptionalAdditionalCost oac = pc ? pc->optionalAdditionalCost()
@@ -1373,7 +1403,9 @@ void GameEngine::executePlayCard(const Intent& intent) {
     ps.transient_play_discount += prepay_discount;
 
     ps.current_play_source = intent.play_source;
-    if (intent.use_alt_play_cost) {
+    if (hidden_play) {
+        // CR 811 — nothing is paid for a facedown reveal.
+    } else if (intent.use_alt_play_cost) {
         // Alternative play cost (Jhin, Meticulous Killer: "play me for [B]"):
         // pay the card's alternativePlayCost instead of the printed cost.
         const Card* c = (card.card_def_id != kInvalidId)
@@ -1398,8 +1430,11 @@ void GameEngine::executePlayCard(const Intent& intent) {
 
     // "You may pay X as an additional cost to play me" (Akshan, Nami). Paid
     // here — after the base cost, before CardPlayedEvent fires WhenYouPlayMe —
-    // so the card's play trigger can read card_counters[paid_flag].
-    maybePayOptionalAdditionalCost(intent.player, intent.card);
+    // so the card's play trigger can read card_counters[paid_flag]. Skipped on
+    // a facedown reveal for the same CR 811 reason as the base cost.
+    if (!hidden_play) {
+        maybePayOptionalAdditionalCost(intent.player, intent.card);
+    }
 
     // Track play count
     ps.cards_played_this_turn++;
@@ -1413,15 +1448,35 @@ void GameEngine::executePlayCard(const Intent& intent) {
         }
     }
     int energy_spent = 0;
-    if (card.card_def_id != kInvalidId) {
+    if (!hidden_play && card.card_def_id != kInvalidId) {
+        // CR 811 — the reveal ignored the base cost, so nothing was spent on
+        // it. Reporting the printed cost here would feed a play that cost zero
+        // into every "energy spent" consumer. Same rule executePlaySpell
+        // applies to a facedown spell.
         energy_spent = card_db_.get(card.card_def_id).energy_cost;
+    }
+    // "When you play a card from face down" (Katarina, Reckless 585) is
+    // card-type agnostic, so a PERMANENT reveal fires it too. Emitted here,
+    // beside the CardPlayedEvent for the same play and preceding it, so a
+    // subscriber that reads both sees the facedown fact first — the ordering
+    // executePlaySpell uses for the spell half.
+    if (hidden_play) {
+        events_.emit(PlayedFromFacedownEvent{intent.card, intent.player});
     }
     events_.emit(CardPlayedEvent{intent.card, intent.player,
         card.card_type, ps.cards_played_this_turn, energy_spent, event_play_source});
 
-    // Store the play location on the game object so resolvePermanent can use it.
-    // Permanents choose location during finalization (CR 355.2.a).
-    card.location = intent.play_location.value_or(BaseLocation{intent.player});
+    // Store the play location on the game object so resolvePermanent can use
+    // it. Permanents choose location during finalization (CR 355.2.a). A
+    // facedown reveal defaults to the battlefield the card was hidden at: the
+    // closed-state generator emits no play_location for a hidden play, and
+    // CR 811 reveals the card where it lay — the same locus CR 811.1.d.2 uses
+    // to restrict a hidden SPELL's targets. Everything else defaults to base.
+    LocationId default_loc = BaseLocation{intent.player};
+    if (hidden_play && hidden_from != kInvalidId) {
+        default_loc = BattlefieldLocation{hidden_from};
+    }
+    card.location = intent.play_location.value_or(default_loc);
 
     // CR 135.2.b.3 + CR 355.1 — "As you play me" / "As I am played"
     // instructions execute during the play action itself, not as a

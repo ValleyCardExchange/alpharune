@@ -78,24 +78,46 @@ public:
     using AffordCheck = std::function<bool(PlayerId, GameObjectId)>;
     void setAffordCheck(AffordCheck check) { can_afford_ = std::move(check); }
 
-    /// Set cost payment callback (injected from GameEngine).
+    /// Set cost payment callback (injected from GameEngine). Used only by the
+    /// bare-ChainManager spell fallback in stepExecuteAndPass — the injected
+    /// executors below pay their own costs.
     using PayCost = std::function<bool(PlayerId, GameObjectId)>;
     void setPayCost(PayCost pay) { pay_cost_ = std::move(pay); }
 
-    /// Set the spell-play executor (injected from GameEngine —
-    /// GameEngine::executePlaySpell).
+    /// Set the play executors (injected from GameEngine —
+    /// GameEngine::executePlaySpell and GameEngine::executePlayCard).
     ///
-    /// Closed-State [Reaction] plays reach the chain as PlayReaction intents
-    /// and `GameEngine::executeIntent` has no case for them, so
-    /// stepExecuteAndPass is the only executor they ever meet. Routing the
-    /// SPELL half of that branch back through executePlaySpell keeps ONE
-    /// owner for every spell play — hand, trash-replay, [Flow], the
-    /// Sandswept Tomb restricted variant and the facedown reveal — instead of
-    /// a second, thinner copy here that knew about none of them. Non-spell
-    /// reactions (Quick-Draw gear, Ambush / Rengar units, facedown
-    /// permanents) keep the local path below.
+    /// Closed-State [Reaction] offers are answered HERE, in
+    /// stepExecuteAndPass: `GameEngine::executeIntent` also has a
+    /// PlayReaction case, but that one serves the SHOWDOWN decision path
+    /// (resolveShowdownDecision) and never sees a closed-state offer, because
+    /// nothing in this class calls executeIntent. The two paths are disjoint,
+    /// and both end in the SAME two executors — which is the point of these
+    /// callbacks.
+    ///
+    /// Both halves used to be hand-rolled here instead, and both were wrong.
+    /// The spell copy paid via payCardCost only (no [Flow], no Sandswept Tomb
+    /// staging), looked for the card in `PlayerState::hand` alone (so a
+    /// trash-replay or [Flow] play was never removed from the trash and the
+    /// disposal pushed a DUPLICATE trash entry), never set `banish_on_leave`,
+    /// never consumed a granted Flow and never stamped
+    /// `target_battlefield_restriction`. The non-spell copy ended in
+    /// `addSpell`, which sets `is_spell` — so a [Quick-Draw] gear, an
+    /// [Ambush] / Rengar unit or a facedown PERMANENT was paid for, skipped
+    /// CR 337.1.c's finalize-time resolution, ran through Card::onResolve (a
+    /// no-op on a permanent) and was disposed into the TRASH instead of
+    /// reaching the board.
+    ///
+    /// Each executor adds its own chain item and re-enters
+    /// GameEngine::runChain, which returns immediately while this loop is live
+    /// (see isProcessing).
     using PlaySpell = std::function<void(const Intent&)>;
     void setPlaySpell(PlaySpell play) { play_spell_ = std::move(play); }
+
+    /// @see setPlaySpell — the non-spell half (units, gear, facedown
+    /// permanents), routed to GameEngine::executePlayCard.
+    using PlayCard = std::function<void(const Intent&)>;
+    void setPlayCard(PlayCard play) { play_card_ = std::move(play); }
 
     /// True while processFEPR is running.
     ///
@@ -122,6 +144,7 @@ private:
     AffordCheck can_afford_;
     PayCost pay_cost_;
     PlaySpell play_spell_;
+    PlayCard play_card_;
     EffectExecutor* executor_ = nullptr;
     bool processing_ = false;
 

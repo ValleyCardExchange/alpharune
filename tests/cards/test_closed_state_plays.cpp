@@ -57,10 +57,14 @@ constexpr CardDefId kHandReaction     = 911;  // [Reaction] 1E, plain hand play
 constexpr CardDefId kFlowReaction     = 912;  // [Reaction][Flow] 1E / flow 2E+1[A]
 constexpr CardDefId kGrantedReaction  = 913;  // [Reaction] 3E, no printed Flow
 constexpr CardDefId kHiddenSpell      = 914;  // [Hidden] 2E, revealed facedown
+constexpr CardDefId kHiddenUnit       = 915;  // [Hidden] 2E UNIT, revealed facedown
 
 // Real cards the deck this branch exists for actually contains.
 constexpr CardDefId kSandsweptTomb = 792;
 constexpr CardDefId kStarCrossed   = 690;  // [Reaction] 3E + 1 [Chaos], pair-pick
+constexpr CardDefId kRengarPouncing = 348; // unit, 3E + 1 [Fury], reaction-to-attack
+constexpr CardDefId kNidaleeCatForm = 676; // unit, 3E + 1 [Body], [Ambush]
+constexpr CardDefId kClothArmor     = 387; // gear, 1E [Mind], [Quick-Draw]
 
 CardDef makeSpellDef(CardDefId id, const char* name, int energy) {
     CardDef d;
@@ -135,6 +139,27 @@ private:
     }();
 };
 
+/// A PERMANENT hidden facedown. Deliberately trigger-free and target-free:
+/// the regression it guards is the reveal mechanism itself (facedown-zone
+/// removal, the is_hidden / hidden_at clear, zero cost, the play source and
+/// PlayedFromFacedownEvent), not any one card's text.
+class HiddenTestUnit : public UnitCard {
+public:
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d;
+        d.id = kHiddenUnit;
+        d.name = "Hidden Test Unit";
+        d.card_type = CardType::Unit;
+        d.domains = {Domain::Fury};
+        d.energy_cost = 2;
+        d.might = 2;
+        d.keywords.set(Keyword::Hidden);
+        return d;
+    }();
+};
+
 /// One agent for both jobs a routed closed-state play needs:
 ///   • at a priority query, take the first intent matching `want` (once),
 ///     then pass priority forever after;
@@ -201,6 +226,8 @@ protected:
                                     std::make_unique<GrantedFlowReactionSpell>());
         card_registry.registerCard(kHiddenSpell,
                                     std::make_unique<HiddenTestSpell>());
+        card_registry.registerCard(kHiddenUnit,
+                                    std::make_unique<HiddenTestUnit>());
         // executePlaySpell reads card_db_ (printed energy_cost, [Repeat]
         // ability_text) and CardDB::get throws on an unknown id.
         card_db.buildFromClasses(card_registry);
@@ -250,6 +277,11 @@ protected:
         obj.keywords = def.keywords;
         obj.domains = def.domains;
         obj.tags = def.tags;
+        // Permanents added this way go on to be played for real, so they need
+        // their printed might; spells and the test spells all print 0, so this
+        // is a no-op for every caller that predates the permanent tests.
+        obj.base_might = def.might;
+        obj.current_might = def.might;
         obj.zone = zone;
         if (zone == ZoneType::Trash) s.player(owner).trash.push_back(id);
         else if (zone == ZoneType::Hand) s.player(owner).hand.push_back(id);
@@ -609,4 +641,216 @@ TEST_F(ClosedStatePlaysTest, LiveHiddenRevealEmitsPlayedFromFacedownEvent) {
         << "no rune may be exhausted for a facedown reveal";
     EXPECT_EQ(countIn(s.player(P1).trash, spell), 1)
         << "the revealed spell trashes as it leaves the chain";
+}
+
+// ─── (f) NON-SPELL closed-state reactions: permanents land on the board ────
+//
+// The spell half of the closed-state branch was routed through
+// GameEngine::executePlaySpell (above). The non-spell half kept a hand-rolled
+// play that ended in `addSpell(...)` — which sets `is_spell = true`. A
+// [Quick-Draw] gear, an [Ambush] unit, a Rengar-style reaction-to-attack unit
+// and a facedown PERMANENT reveal therefore all: paid their full cost, were
+// finalized as if they were spells (so CR 337.1.c's "permanents resolve
+// immediately on finalize" never applied to them), resolved through
+// Card::onResolve (a no-op on a UnitCard / GearCard), and were then disposed
+// by stepResolve's `if (resolved.is_spell)` arm straight into the TRASH. The
+// card was paid for and never reached the board.
+//
+// These four drive the real FEPR loop and assert where the permanent actually
+// lands. The fix routes this half through GameEngine::executePlayCard, the
+// same executor every other permanent play uses.
+
+TEST_F(ClosedStatePlaysTest, ClosedPouncingUnitLandsAtTheAttackedBattlefield) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+    // Rengar, Pouncing's permission is "a battlefield you're attacking", so
+    // the closed state we open is the one inside a combat.
+    s.turn.ns_state = NeutralShowdownState::Showdown;
+    s.battlefields[0].combat_in_progress = true;
+    s.battlefields[0].attacker = P1;
+    s.battlefields[0].defender = P2;
+    addUnitIn(s, P1, 0, "Attacker");
+    addUnitIn(s, P2, 0, "Defender");
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto rengar = addToZoneIn(s, P1, kRengarPouncing, ZoneType::Hand);
+    for (int i = 0; i < 6; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == rengar;
+    };
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the closed-state generator must offer the Pouncing play";
+    EXPECT_FALSE(inHandIn(s, P1, rengar)) << "the play leaves hand";
+    EXPECT_EQ(countIn(s.player(P1).trash, rengar), 0)
+        << "a PERMANENT reaction must not be disposed as if it were a spell";
+
+    const auto& obj = s.getObject(rengar);
+    ASSERT_TRUE(obj.location.has_value())
+        << "the unit must be somewhere on the board";
+    ASSERT_TRUE(std::holds_alternative<BattlefieldLocation>(*obj.location));
+    EXPECT_EQ(std::get<BattlefieldLocation>(*obj.location).id,
+              s.battlefields[0].id)
+        << "it is played TO the battlefield the intent named";
+    const auto attackers =
+        s.unitsAt(BattlefieldLocation{s.battlefields[0].id}, P1);
+    EXPECT_NE(std::find(attackers.begin(), attackers.end(), rengar),
+              attackers.end())
+        << "and is a combatant on the attacking side";
+
+    EXPECT_EQ(countReady(s, P1), 3)
+        << "3E exhausted; the [Fury] power recycles one already-exhausted rune";
+    EXPECT_TRUE(s.chain.items.empty());
+}
+
+TEST_F(ClosedStatePlaysTest, ClosedAmbushUnitLandsReadyAtItsBattlefield) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+    // [Ambush] needs a battlefield where you already have units — give P1 one
+    // at BF1 only, so the single offer names BF1 and the assertion is sharp.
+    addUnitIn(s, P1, 1, "Anchor");
+
+    auto opener  = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto nidalee = addToZoneIn(s, P1, kNidaleeCatForm, ZoneType::Hand);
+    for (int i = 0; i < 6; ++i) addReadyRune(s, P1, Domain::Body);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == nidalee;
+    };
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the closed-state generator must offer the Ambush play";
+    EXPECT_EQ(countIn(s.player(P1).trash, nidalee), 0)
+        << "an [Ambush] unit must not be disposed as if it were a spell";
+
+    const auto& obj = s.getObject(nidalee);
+    ASSERT_TRUE(obj.location.has_value());
+    ASSERT_TRUE(std::holds_alternative<BattlefieldLocation>(*obj.location));
+    EXPECT_EQ(std::get<BattlefieldLocation>(*obj.location).id,
+              s.battlefields[1].id);
+    EXPECT_FALSE(obj.is_exhausted)
+        << "an Ambush unit entering a battlefield enters ready";
+}
+
+TEST_F(ClosedStatePlaysTest, ClosedQuickDrawGearAttachesToTheNamedUnit) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+    auto bearer = addUnitIn(s, P1, 0, "Bearer");
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto gear   = addToZoneIn(s, P1, kClothArmor, ZoneType::Hand);
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Mind);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == gear &&
+               !i.targets.empty() && i.targets[0] == bearer;
+    };
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: the closed-state generator must offer the Quick-Draw play";
+    EXPECT_EQ(countIn(s.player(P1).trash, gear), 0)
+        << "gear must not be disposed as if it were a spell";
+
+    const auto& g = s.getObject(gear);
+    ASSERT_TRUE(g.attached_to.has_value())
+        << "[Quick-Draw] attaches the gear to the unit the play named (CR 819)";
+    EXPECT_EQ(*g.attached_to, bearer);
+    EXPECT_EQ(s.player(P1).gears_played_this_turn, 1)
+        << "the gear play path owns the per-turn gear counter";
+}
+
+TEST_F(ClosedStatePlaysTest, ClosedFacedownPermanentRevealEntersPlayForFree) {
+    GameEngine engine(card_db, events, card_registry);
+    ClosedStateAgent agent1;
+    FirstChoiceAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToZoneIn(s, P1, kOpener, ZoneType::Hand);
+    auto unit   = addToZoneIn(s, P1, kHiddenUnit, ZoneType::Hand);
+    {   // hidden LAST turn at BF0, so it has [Reaction] now
+        auto& ps = s.player(P1);
+        ps.hand.erase(std::remove(ps.hand.begin(), ps.hand.end(), unit),
+                      ps.hand.end());
+        auto& c = s.getObject(unit);
+        c.zone = ZoneType::FacedownZone;
+        c.location = std::nullopt;
+        c.is_hidden = true;
+        c.hidden_at = 0;
+        c.hidden_on_turn = s.turn.turn_number - 1;
+        s.battlefields[0].facedown.push_back(unit);
+    }
+    for (int i = 0; i < 3; ++i) addReadyRune(s, P1, Domain::Fury);
+
+    agent1.want = [&](const Intent& i) {
+        return i.type == IntentType::PlayReaction && i.card == unit;
+    };
+
+    std::vector<PlayedFromFacedownEvent> facedown;
+    auto fd = events.on_played_from_facedown.connect(
+        [&](const PlayedFromFacedownEvent& e) { facedown.push_back(e); });
+    std::vector<CardPlayedEvent> played;
+    auto conn = events.on_card_played.connect(
+        [&](const CardPlayedEvent& e) { played.push_back(e); });
+
+    openTheChain(engine, opener);
+
+    ASSERT_TRUE(agent1.taken)
+        << "sanity: a permanent hidden last turn must be offered as a "
+           "closed-state play";
+
+    // Reveal mechanics — the half that already worked, guarded.
+    EXPECT_TRUE(s.battlefields[0].facedown.empty())
+        << "the revealed permanent leaves the facedown zone";
+    const auto& obj = s.getObject(unit);
+    EXPECT_FALSE(obj.is_hidden);
+    EXPECT_EQ(obj.hidden_at, kInvalidId);
+    EXPECT_EQ(countExhausted(s, P1), 0)
+        << "CR 811 — played IGNORING its base cost, so no rune is spent";
+
+    ASSERT_EQ(played.size(), 2u);
+    EXPECT_EQ(played[1].object, unit);
+    EXPECT_EQ(played[1].play_source, Intent::PlaySource::Hidden);
+    EXPECT_EQ(played[1].energy_spent, 0);
+
+    // "When you play a card from face down" is card-type agnostic (Katarina,
+    // Reckless 585), so a PERMANENT reveal must fire it too.
+    ASSERT_EQ(facedown.size(), 1u)
+        << "the permanent reveal must emit PlayedFromFacedownEvent exactly once";
+    EXPECT_EQ(facedown[0].card, unit);
+    EXPECT_EQ(facedown[0].player, P1);
+
+    // ... and it must reach the board, at the battlefield it was hidden at.
+    EXPECT_EQ(countIn(s.player(P1).trash, unit), 0)
+        << "a revealed PERMANENT must not be disposed as if it were a spell";
+    ASSERT_TRUE(obj.location.has_value());
+    ASSERT_TRUE(std::holds_alternative<BattlefieldLocation>(*obj.location));
+    EXPECT_EQ(std::get<BattlefieldLocation>(*obj.location).id,
+              s.battlefields[0].id)
+        << "CR 811 — the card was face down AT that battlefield; it is "
+           "revealed and played there";
 }

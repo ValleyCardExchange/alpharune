@@ -240,33 +240,38 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
             current = opponent(current);
         } else if (chosen.type == IntentType::PlayReaction) {
             auto& card = state_.getObject(chosen.card);
-            auto& ps = state_.player(current);
 
-            // ── SPELLS: one executor owns every spell play ──
+            // ── ONE executor owns every play, spell or permanent ──
             //
-            // GameEngine::executeIntent has no PlayReaction case, so a
-            // closed-state spell offer used to be executed by the local path
-            // below — a second, thinner copy of executePlaySpell that paid
-            // via payCardCost only (no [Flow], no Sandswept Tomb staging),
-            // looked for the card in `ps.hand` alone (a trash-replay or
-            // [Flow] play was therefore never removed from the trash, and the
-            // disposal below pushed a DUPLICATE trash entry), never set
-            // `banish_on_leave`, never consumed a granted Flow and never
-            // stamped `target_battlefield_restriction`. Routing through
-            // GameEngine::executePlaySpell fixes all of those at once,
-            // including the facedown reveal (which executePlaySpell now
-            // handles: facedown-zone removal, the is_hidden clear,
-            // PlayedFromFacedownEvent and play_source = Hidden).
+            // Closed-State [Reaction] offers are answered here and nowhere
+            // else: GameEngine::executeIntent's PlayReaction case serves the
+            // SHOWDOWN decision path, and nothing in this class calls
+            // executeIntent, so the two can't double-execute. Both halves
+            // route back out to the engine's real executors (see
+            // ChainManager::setPlaySpell for what the two hand-rolled copies
+            // that used to live here got wrong — the spell one silently
+            // mispriced [Flow] and Tomb plays, the permanent one paid full
+            // cost and put the card in the TRASH).
             //
-            // executePlaySpell adds the chain item itself and re-enters
-            // runChain, which returns immediately while this loop is live
-            // (ChainManager::isProcessing). If it added nothing the intent
-            // was rejected as illegal — it pays nothing on that path, so
-            // priority simply stays where it is rather than restarting FEPR
-            // on an unchanged chain.
-            if (play_spell_ && card.isSpell()) {
+            // Each executor adds its own chain item and re-enters runChain,
+            // which returns immediately while this loop is live
+            // (ChainManager::isProcessing), so the chain growing is the signal
+            // that the play happened. If nothing was added the intent was
+            // rejected as illegal — it pays nothing on that path, so priority
+            // simply stays where it is rather than restarting FEPR on an
+            // unchanged chain.
+            //
+            // executePlaySpell handles hand / trash-replay / [Flow] / the
+            // Sandswept Tomb restricted variant / the facedown spell reveal;
+            // executePlayCard handles [Quick-Draw] gear (its `targets` name
+            // the unit to attach to), [Ambush] and Rengar-style units (its
+            // `play_location` names the battlefield) and the facedown
+            // PERMANENT reveal (zone removal, the is_hidden / hidden_at
+            // clear, zero cost per CR 811, PlayedFromFacedownEvent).
+            const auto& exec_play = card.isSpell() ? play_spell_ : play_card_;
+            if (exec_play) {
                 const size_t before = state_.chain.items.size();
-                play_spell_(chosen);
+                exec_play(chosen);
                 if (state_.chain.items.size() != before) {
                     return true; // Item added → restart FEPR from Finalize
                 }
@@ -275,14 +280,35 @@ bool ChainManager::stepExecuteAndPass(AgentQuery query_agent,
                 continue;
             }
 
-            // ── NON-SPELL reactions ──
+            // ── No executor injected: the bare-ChainManager fallback ──
             //
-            // Quick-Draw gear, [Ambush] / Rengar units and facedown
-            // PERMANENTS revealed as reactions. Play source is derived from
-            // the card's zone/hidden-status (Kennen spec §2/addendum #2)
-            // BEFORE is_hidden is cleared below. ChainManager can't call
-            // GameEngine::playSourceFor, so it uses the shared
-            // playSourceForZone helper directly, same as
+            // Only reachable from a unit test that drives processFEPR with no
+            // GameEngine behind it (tests/test_chain.cpp's FEPR-restart test
+            // and tests/cards/test_play_from_non_hand.cpp's facedown-reveal
+            // test both do exactly this, on purpose). The minimal SPELL play
+            // below serves those and nothing else — in a real game
+            // play_spell_ is always wired, so this is dead.
+            //
+            // There is deliberately NO permanent equivalent. Hand-rolling one
+            // is what produced the bug described on setPlaySpell: it needs
+            // location stamping from `play_location`, cost payment, the
+            // `onPlay` hook, the per-turn gear counters and target carry-over,
+            // all of which already live in GameEngine::executePlayCard. A
+            // permanent reaction with no executor is rejected loudly instead
+            // of quietly played wrong.
+            if (!card.isSpell()) {
+                events_.logWarn("CHAIN: no play executor injected — permanent "
+                                "reaction play of " + card.name + " rejected "
+                                "(wire ChainManager::setPlayCard)");
+                continue;
+            }
+
+            auto& ps = state_.player(current);
+
+            // Play source is derived from the card's zone/hidden-status
+            // (Kennen spec §2/addendum #2) BEFORE is_hidden is cleared below.
+            // ChainManager can't call GameEngine::playSourceFor, so it uses
+            // the shared playSourceForZone helper directly, same as
             // EffectExecutor::playIgnoringCost.
             Intent::PlaySource event_play_source =
                 playSourceForZone(card.zone, card.is_hidden);
