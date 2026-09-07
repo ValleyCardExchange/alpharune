@@ -83,7 +83,9 @@ which are not touched by this work). The Rengar list is fully covered.
 
 **State.** `GameObject::is_empowered` (bool, default false). Binary per CR
 441.1.a. Survives turn boundaries; cleared when the object leaves the board
-(same places `is_stunned` is reset).
+`[SUPERSEDED → addendum #10]` ~~(same places `is_stunned` is reset)~~ — in the
+executor's board-exit paths (kill, bounce to hand, banish, recycle-from-
+board); see addendum #10.
 
 **Actions (EffectExecutor).**
 - `empowerObject(id)`: if already empowered, nothing (CR 441.1.c);
@@ -450,8 +452,17 @@ it is linked from.
    allow a friendly unit is eligible; the list is descriptive, the rule is
    generic.
 
+10. **(added during Task 2 review, 2026-09-07)** "Same places `is_stunned`
+    is reset" was wrong: stun decays per turn at the Ending Step (CR
+    423.1.a.2), which is not a board-exit event. Empowered is cleared in the
+    executor's board-exit paths — `killObject`, `bounceToHand`,
+    `banishObject`, and any recycle that takes an object off the board.
+    Tests **#30** (empowered unit killed → not empowered) and **#31**
+    (empowered unit bounced → not empowered).
+
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
-costs offered and each pays its own).
+costs offered and each pays its own), #30–#31 (Empowered clears on board
+exit).
 
 ## Section 9 — Where it lives
 
