@@ -510,6 +510,54 @@ def count_flags(decisions, deck_by_seat):
     return flow_printed, flow_granted, tomb, reactions_closed
 
 
+FROZEN_BURST_MIN_RUN = 10
+
+
+def _state_fingerprint(decision: dict) -> str:
+    """Everything the log records about a decision EXCEPT its index: the
+    actor, what was chosen, the scores, both players' resource lines, the
+    battlefields and the phase. Two consecutive decisions with the same
+    fingerprint mean the engine executed nothing in between."""
+    keys = ("actor", "chosen", "scores", "players", "battlefields", "phase",
+            "legal_count")
+    return json.dumps({k: decision.get(k) for k in keys}, sort_keys=True)
+
+
+def find_frozen_bursts(decisions, min_run: int = FROZEN_BURST_MIN_RUN):
+    """Batch VALIDITY check. Returns (bursts, max_run) where `bursts` lists
+    every run of >= min_run consecutive decisions whose full fingerprint is
+    identical — the signature of an offer the executor silently drops (the
+    same intent is legal again, the agent picks it again, nothing moves).
+    Iteration 0 found two such holes by hand (closed-state ability
+    activations; unpayable equip offers) and they invalidated whole
+    batches, so every summary now leads with this. `max_run` is the longest
+    identical run in the game, even when below the threshold."""
+    bursts = []
+    max_run = 0
+    run_start = 0
+    prev_fp = None
+    n = len(decisions)
+    for i in range(n + 1):
+        fp = _state_fingerprint(decisions[i]) if i < n else None
+        if i < n and fp == prev_fp:
+            continue
+        length = i - run_start
+        if prev_fp is not None:
+            max_run = max(max_run, length)
+            if length >= min_run:
+                first = decisions[run_start]
+                bursts.append({
+                    "start_idx": first.get("idx", run_start),
+                    "turn": first.get("turn"),
+                    "actor": first.get("actor"),
+                    "type": (first.get("chosen") or {}).get("type"),
+                    "length": length,
+                })
+        run_start = i
+        prev_fp = fp
+    return bursts, max_run
+
+
 def accumulate_family_mix(decisions, deck_by_seat, mix):
     for d in decisions:
         chosen = d.get("chosen") or {}
@@ -554,6 +602,9 @@ def analyze_directory(log_dir: Path, top_n: int = 20) -> dict:
     mistakes = []
     swings = []
     burn_empower_seen = False
+    frozen_bursts = []
+    max_run_overall = 0
+    games_with_bursts = 0
 
     for filename, game in games:
         decisions = get_decisions_list(game)
@@ -593,6 +644,16 @@ def analyze_directory(log_dir: Path, top_n: int = 20) -> dict:
 
         cq = count_conquers(decisions, deck_by_seat)
         conquers_total.update(cq)
+
+        bursts, max_run = find_frozen_bursts(decisions)
+        max_run_overall = max(max_run_overall, max_run)
+        if bursts:
+            games_with_bursts += 1
+            for b in bursts:
+                b = dict(b)
+                b["file"] = filename
+                b["deck"] = deck_by_seat.get(b["actor"], b["actor"])
+                frozen_bursts.append(b)
 
         if any(has_burn_or_empower(d) for d in decisions):
             burn_empower_seen = True
@@ -696,6 +757,15 @@ def analyze_directory(log_dir: Path, top_n: int = 20) -> dict:
     if skipped_unparseable:
         notes.append(f"{skipped_unparseable} file(s) failed to parse as JSON and were skipped.")
 
+    if frozen_bursts:
+        notes.append(
+            f"VALIDITY: {games_with_bursts} game(s) contain frozen-state "
+            f"bursts (longest run {max_run_overall}). A run of identical "
+            "decisions with no state change is an engine no-op, not play — "
+            "treat the affected deck's numbers as engine evidence until "
+            "the offer/executor mismatch is fixed."
+        )
+
     result = {
         "schema": 1,
         "games_processed": len(games),
@@ -716,6 +786,12 @@ def analyze_directory(log_dir: Path, top_n: int = 20) -> dict:
         "per_game": per_game,
         "mistakes": mistakes[:top_n],
         "swings": swings[:top_n],
+        "validity": {
+            "frozen_bursts": frozen_bursts,
+            "games_with_bursts": games_with_bursts,
+            "max_run": max_run_overall,
+            "min_run_flagged": FROZEN_BURST_MIN_RUN,
+        },
         "notes": notes,
     }
     return result
@@ -745,6 +821,30 @@ def render_markdown(summary: dict) -> str:
         f"skipped (unparseable): {summary['skipped_unparseable']}"
     )
     lines.append(f"Mean turns (overall): {summary['mean_turns_overall']}")
+    lines.append("")
+    v = summary.get("validity") or {}
+    lines.append("## Validity")
+    lines.append("")
+    if v.get("frozen_bursts"):
+        lines.append(
+            f"**FROZEN-STATE BURSTS in {v['games_with_bursts']} game(s)** "
+            f"(longest run {v['max_run']}, threshold {v['min_run_flagged']}): "
+            "the same decision repeated with NO state change — an engine "
+            "no-op. The affected deck's numbers below are engine evidence, "
+            "not play, until the offer/executor mismatch is fixed."
+        )
+        for b in v["frozen_bursts"][:20]:
+            lines.append(
+                f"- {b['file']}: {b['deck']} ({b['actor']}) x{b['length']} "
+                f"{b['type']} from decision {b['start_idx']} (turn {b['turn']})"
+            )
+        if len(v["frozen_bursts"]) > 20:
+            lines.append(f"- ... and {len(v['frozen_bursts']) - 20} more")
+    else:
+        lines.append(
+            f"OK — no frozen-state bursts (longest identical run "
+            f"{v.get('max_run', 0)}, threshold {v.get('min_run_flagged', FROZEN_BURST_MIN_RUN)})."
+        )
     lines.append("")
 
     lines.append("## Win rate by deck and seat (Wilson 95%)")

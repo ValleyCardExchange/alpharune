@@ -335,5 +335,102 @@ class BatchAnalysisTests(unittest.TestCase):
         self.assertIn("crude by design", md_text)
 
 
+class FrozenBurstValidityTests(unittest.TestCase):
+    """Batch VALIDITY: a run of identical decisions with a frozen state is
+    the signature of an engine no-op (an offer the executor silently
+    drops). Iteration 0 found two of these by hand — Seal of Discord
+    closed-state activations and Last Rites equip offers — so every batch
+    summary now flags them up front."""
+
+    def _game(self, decisions, winner_seat="P1"):
+        return {
+            "decks": {"P1": "deckA", "P2": "deckB"},
+            "agents": {"P1": "mcts", "P2": "mcts"},
+            "seed": 1,
+            "seats": {"P1": "deckA", "P2": "deckB"},
+            "engine_version": "test",
+            "log": decisions,
+            "winner": {"deck": "deckA" if winner_seat == "P1" else "deckB",
+                       "seat": winner_seat},
+            "reason": "test",
+            "turns": max(d["turn"] for d in decisions),
+            "final_scores": list(decisions[-1]["scores"]),
+            "decisions": len(decisions),
+        }
+
+    def _write(self, tmpdir, name, game):
+        (tmpdir / name).write_text(json.dumps(game))
+
+    def _run(self, games):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            for name, game in games.items():
+                self._write(tmpdir, name, game)
+            return analyze_batch.analyze_directory(tmpdir, top_n=20)
+
+    def test_frozen_run_is_flagged_with_actor_type_turn_length(self):
+        act = _chosen("ActivateAbility")
+        decs = [_decision(i, 3, "P1", (1, 0), act) for i in range(12)]
+        decs.append(_decision(12, 3, "P1", (1, 0), _chosen("EndTurn")))
+        decs.append(_decision(13, 4, "P2", (1, 0), _chosen("EndTurn")))
+        s = self._run({"game_0.json": self._game(decs)})
+        v = s["validity"]
+        self.assertEqual(v["games_with_bursts"], 1)
+        self.assertEqual(v["max_run"], 12)
+        self.assertEqual(len(v["frozen_bursts"]), 1)
+        b = v["frozen_bursts"][0]
+        self.assertEqual(b["actor"], "P1")
+        self.assertEqual(b["deck"], "deckA")
+        self.assertEqual(b["type"], "ActivateAbility")
+        self.assertEqual(b["turn"], 3)
+        self.assertEqual(b["length"], 12)
+        self.assertEqual(b["start_idx"], 0)
+        self.assertTrue(any("VALIDITY" in n for n in s["notes"]))
+
+    def test_run_with_changing_state_is_not_a_burst(self):
+        act = _chosen("ActivateAbility")
+        decs = []
+        for i in range(12):
+            d = _decision(i, 3, "P1", (1, 0), act)
+            d["players"][0]["runes_ready"] = 12 - i   # state moves each time
+            decs.append(d)
+        decs.append(_decision(12, 4, "P2", (1, 0), _chosen("EndTurn")))
+        s = self._run({"game_0.json": self._game(decs)})
+        self.assertEqual(s["validity"]["games_with_bursts"], 0)
+        self.assertEqual(s["validity"]["frozen_bursts"], [])
+
+    def test_short_identical_run_is_below_threshold(self):
+        act = _chosen("ActivateAbility")
+        decs = [_decision(i, 3, "P1", (1, 0), act) for i in range(5)]
+        decs.append(_decision(5, 4, "P2", (1, 0), _chosen("EndTurn")))
+        s = self._run({"game_0.json": self._game(decs)})
+        self.assertEqual(s["validity"]["games_with_bursts"], 0)
+        self.assertEqual(s["validity"]["max_run"], 5)
+
+    def test_markdown_validity_section(self):
+        act = _chosen("ActivateAbility")
+        decs = [_decision(i, 3, "P1", (1, 0), act) for i in range(12)]
+        decs.append(_decision(12, 4, "P2", (1, 0), _chosen("EndTurn")))
+        s = self._run({"game_0.json": self._game(decs)})
+        md = analyze_batch.render_markdown(s)
+        self.assertIn("## Validity", md)
+        self.assertIn("FROZEN-STATE BURSTS", md)
+        clean = self._run({"game_0.json": self._game(
+            [_decision(0, 1, "P1", (0, 0), _chosen("EndTurn")),
+             _decision(1, 2, "P2", (0, 0), _chosen("EndTurn"))])})
+        md2 = analyze_batch.render_markdown(clean)
+        self.assertIn("## Validity", md2)
+        self.assertIn("no frozen-state bursts", md2)
+
+
+class ExistingFixtureValidityTests(unittest.TestCase):
+    def test_existing_fixture_has_no_bursts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            build_fixture(tmpdir)
+            s = analyze_batch.analyze_directory(tmpdir, top_n=20)
+        self.assertEqual(s["validity"]["games_with_bursts"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
