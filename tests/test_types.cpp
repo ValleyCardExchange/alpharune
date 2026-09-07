@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "core/intent.h"
 #include "core/types.h"
 
 #include <cstdint>
@@ -121,4 +122,41 @@ TEST(TypesTest, KeywordToStringCompleteAndUnique) {
     }
     EXPECT_EQ(seen.size(), static_cast<size_t>(Keyword::Count));
     EXPECT_STREQ(toString(Keyword::Flow), "Flow");
+}
+
+// ─── Intent::operator== is a FULL structural comparison ────────────────────
+//
+// Serializers (and the OpenSpiel bridge) locate a chosen action by its index
+// in the legal-action list, so any field that distinguishes two otherwise
+// identical offers has to participate in equality — otherwise the lookup
+// picks the earlier twin and the recorded decision is a different play from
+// the one that was made. `flow_source` was fixed on this branch for exactly
+// that reason; `use_alt_play_cost` and `granted_ability_def` carry the same
+// hazard (an alt-cost play vs the printed-cost play of the same card; an
+// aura-granted ability vs the bearer's own ability at the same index).
+TEST(TypesTest, IntentEqualityDistinguishesAltCostAndGrantedAbility) {
+    Intent base;
+    base.type = IntentType::PlayCard;
+    base.player = PlayerId::Player1;
+    base.card = 7;
+
+    Intent alt = base;
+    alt.use_alt_play_cost = true;
+    EXPECT_FALSE(base == alt)
+        << "Two plays of the same card that differ only in whether they pay "
+           "the alternate cost are different actions.";
+
+    Intent granted;
+    granted.type = IntentType::ActivateAbility;
+    granted.player = PlayerId::Player1;
+    granted.ability_source = 7;
+    granted.ability_index = 0;
+    Intent own = granted;
+    granted.granted_ability_def = 462;
+    EXPECT_FALSE(own == granted)
+        << "An aura-granted ability and the bearer's own ability at the same "
+           "index are different actions.";
+
+    Intent same = base;
+    EXPECT_TRUE(base == same) << "sanity: identical intents still compare equal";
 }

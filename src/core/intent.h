@@ -199,6 +199,13 @@ struct Intent {
     /// would conflate "twin" intents (same type/card/targets/ability_source
     /// but different destinations, chosen objects, damage assignments, etc.)
     /// and bias the recorded chosen_idx toward earlier indices.
+    ///
+    /// EVERY field that can distinguish two otherwise-identical offers has to
+    /// appear below, or the lookup silently records the earlier twin: the
+    /// cost-selecting fields (`use_alt_play_cost`, `flow_source`,
+    /// `target_battlefield_restriction`) and the ability-selecting one
+    /// (`granted_ability_def`) are each the sole difference between two live
+    /// offers the generators emit side by side.
     bool operator==(const Intent& o) const {
         return type == o.type
             && player == o.player
@@ -210,7 +217,9 @@ struct Intent {
             && ability_source == o.ability_source
             && ability_index == o.ability_index
             && play_source == o.play_source
+            && use_alt_play_cost == o.use_alt_play_cost
             && flow_source == o.flow_source
+            && granted_ability_def == o.granted_ability_def
             && target_battlefield_restriction == o.target_battlefield_restriction
             && targets == o.targets
             && damage_assignments == o.damage_assignments

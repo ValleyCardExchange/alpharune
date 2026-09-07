@@ -38,8 +38,8 @@ struct GameObject {
     bool is_stunned = false;
     // Empowered (CR 441.1.a) — a binary status, not a counter. Set by
     // EffectExecutor::empowerObject, cleared by disempowerObject. Survives
-    // turn boundaries; cleared when the object leaves the board (same places
-    // is_stunned is reset).
+    // turn boundaries; cleared in the executor's board-exit paths (kill,
+    // bounce, banish, recycle-from-board, combat death).
     bool is_empowered = false;
     bool is_hidden = false;             // facedown at a battlefield
     BattlefieldId hidden_at = kInvalidId; // which BF it's hidden at
