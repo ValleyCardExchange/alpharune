@@ -177,6 +177,7 @@ void EffectExecutor::killObject(GameObjectId target) {
         obj.location = std::nullopt;
         obj.damage_marked = 0;
         obj.combat_designation = CombatDesignation::None;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (!is_token) {
             state_.player(obj.owner).trash.push_back(target);
         } else {
@@ -194,6 +195,7 @@ void EffectExecutor::killObject(GameObjectId target) {
         obj.zone = is_token ? ZoneType::Banishment : ZoneType::Trash;
         obj.last_location = obj.location;
         obj.location = std::nullopt;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (!is_token) {
             state_.player(obj.owner).trash.push_back(target);
         } else {
@@ -284,6 +286,7 @@ void EffectExecutor::bounceToHand(GameObjectId target) {
         obj.damage_marked = 0;
         obj.combat_designation = CombatDesignation::None;
         obj.is_exhausted = false;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         events_.emit(LeftBoardEvent{target, controller, obj.card_type,
             was_at.value_or(BaseLocation{controller}), ZoneType::Banishment, false});
         return;
@@ -295,6 +298,7 @@ void EffectExecutor::bounceToHand(GameObjectId target) {
     obj.damage_marked = 0;
     obj.combat_designation = CombatDesignation::None;
     obj.is_exhausted = false;
+    obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
     state_.player(obj.owner).hand.push_back(target);
 
     events_.emit(LeftBoardEvent{target, controller, obj.card_type,
@@ -579,6 +583,7 @@ void EffectExecutor::recycleCards(PlayerId /*effect_controller*/,
         auto& obj = state_.getObject(cid);
         obj.zone = ZoneType::MainDeck;
         obj.location = std::nullopt;
+        obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
         if (obj.card_type == CardType::Rune) {
             obj.zone = ZoneType::RuneDeck;
             state_.player(obj.owner).rune_deck.insert(
@@ -617,6 +622,7 @@ void EffectExecutor::banishObject(GameObjectId target) {
 
     obj.zone = ZoneType::Banishment;
     obj.location = std::nullopt;
+    obj.is_empowered = false;  // CR 441.1.a — Empowered clears on leaving the board
     state_.player(obj.owner).banishment.push_back(target);
 
     events_.emit(LeftBoardEvent{target, controller, obj.card_type,

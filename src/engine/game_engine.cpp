@@ -42,21 +42,12 @@ GameEngine::~GameEngine() {
 // Game lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
 
-GameResult GameEngine::runGame(
-    const DeckSubmission& deck1,
-    const DeckSubmission& deck2,
-    AgentInterface& agent1,
-    AgentInterface& agent2,
-    uint64_t seed) {
-
-    rng_.seed(seed == 0 ? std::random_device{}() : seed);
-    agents_[0] = &agent1;
-    agents_[1] = &agent2;
-
-    state_ = GameState{};
-    state_.mode = ModeOfPlay{};
-
-    // Initialize Phase 2 subsystems
+// Construct ChainManager / EffectExecutor / TriggerManager against the
+// current `state_` and wire their cross-references. Called once per game
+// from both runGame (fresh state) and resumeFromSnapshot (state already
+// substituted from a snapshot) — previously duplicated verbatim in both;
+// factored out so there is exactly one place that assembles this wiring.
+void GameEngine::initSubsystems() {
     chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
     chain_manager_->setAffordCheck(
         [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
@@ -73,6 +64,24 @@ GameResult GameEngine::runGame(
         state_, events_, card_db_, *chain_manager_, card_registry_);
     trigger_manager_->setEffectExecutor(effect_executor_.get());
     trigger_manager_->subscribe();
+}
+
+GameResult GameEngine::runGame(
+    const DeckSubmission& deck1,
+    const DeckSubmission& deck2,
+    AgentInterface& agent1,
+    AgentInterface& agent2,
+    uint64_t seed) {
+
+    rng_.seed(seed == 0 ? std::random_device{}() : seed);
+    agents_[0] = &agent1;
+    agents_[1] = &agent2;
+
+    state_ = GameState{};
+    state_.mode = ModeOfPlay{};
+
+    // Initialize Phase 2 subsystems
+    initSubsystems();
 
     setupGame(deck1, deck2);
     drawOpeningHands();
@@ -173,22 +182,7 @@ StepResult GameEngine::resumeFromSnapshot(GameState snapshot_state,
     // Initialise subsystems (parallel to runGame's first block). These
     // hold references into `state_` and `events_`, which are now
     // populated from the snapshot.
-    chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
-    chain_manager_->setAffordCheck(
-        [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
-    chain_manager_->setPayCost(
-        [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
-    effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
-    effect_executor_->setRng(&rng_);
-    effect_executor_->setAgentQuery(
-        [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
-            return queryAgentForChain(p, actions);
-        });
-    chain_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_ = std::make_unique<TriggerManager>(
-        state_, events_, card_db_, *chain_manager_, card_registry_);
-    trigger_manager_->setEffectExecutor(effect_executor_.get());
-    trigger_manager_->subscribe();
+    initSubsystems();
 
     step_driver_ = std::make_unique<StepDriver>();
     step_result_ = GameResult{};

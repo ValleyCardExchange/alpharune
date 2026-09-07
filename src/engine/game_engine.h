@@ -215,27 +215,10 @@ public:
     // testHook_executeIntent on an ActivateAbility/ActivateActionAbility
     // intent pays costs via effect_executor_ and resolves through
     // chain_manager_, so tests that drive a real activation to completion
-    // need this called first. Mirrors the identical block in runGame /
-    // resumeFromSnapshot; does not touch agents_ or start a turn loop.
-    void testHook_initSubsystems() {
-        chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
-        chain_manager_->setAffordCheck(
-            [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
-        chain_manager_->setPayCost(
-            [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
-        effect_executor_ = std::make_unique<EffectExecutor>(
-            state_, events_, card_db_, &card_registry_);
-        effect_executor_->setRng(&rng_);
-        effect_executor_->setAgentQuery(
-            [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
-                return queryAgentForChain(p, actions);
-            });
-        chain_manager_->setEffectExecutor(effect_executor_.get());
-        trigger_manager_ = std::make_unique<TriggerManager>(
-            state_, events_, card_db_, *chain_manager_, card_registry_);
-        trigger_manager_->setEffectExecutor(effect_executor_.get());
-        trigger_manager_->subscribe();
-    }
+    // need this called first. Thin wrapper over the same initSubsystems()
+    // runGame/resumeFromSnapshot call; does not touch agents_ or start a
+    // turn loop.
+    void testHook_initSubsystems() { initSubsystems(); }
 
     // CR-legal combat damage allocations a real damage step would emit.
     // Exposed in public for unit tests; the struct + implementation
@@ -299,6 +282,12 @@ private:
     /// snapshot. Called after beginGame and after each applyChoice once
     /// the driver has either suspended at a decision or terminated.
     void refreshStepFromDriver();
+
+    /// Construct ChainManager / EffectExecutor / TriggerManager against the
+    /// current state_ and wire their cross-references. Called once per game
+    /// from runGame (fresh state) and resumeFromSnapshot (state already
+    /// substituted from a snapshot).
+    void initSubsystems();
 
     // ── Setup ──
     void setupGame(const DeckSubmission& deck1, const DeckSubmission& deck2);

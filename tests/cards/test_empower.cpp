@@ -73,6 +73,30 @@ TEST_F(EmpowerTest, DisempoweringEmpoweredObjectClearsStatus) {
     EXPECT_FALSE(state.getObject(obj_id).is_empowered);
 }
 
+// ─── Empowered clears when the object leaves the board (spec §1) ──────────
+
+TEST_F(EmpowerTest, EmpoweredClearsWhenKilled) {
+    auto obj_id = addUnit(P1, kInvalidId, /*might=*/3, /*at_bf=*/0);
+    EffectExecutor exec(state, events, card_db);
+    exec.empowerObject(obj_id);
+    ASSERT_TRUE(state.getObject(obj_id).is_empowered);
+
+    exec.killObject(obj_id);
+    EXPECT_FALSE(state.getObject(obj_id).is_empowered)
+        << "Empowered must clear when the object leaves the board via death";
+}
+
+TEST_F(EmpowerTest, EmpoweredClearsWhenBouncedToHand) {
+    auto obj_id = addUnit(P1, kInvalidId, /*might=*/3, /*at_bf=*/0);
+    EffectExecutor exec(state, events, card_db);
+    exec.empowerObject(obj_id);
+    ASSERT_TRUE(state.getObject(obj_id).is_empowered);
+
+    exec.bounceToHand(obj_id);
+    EXPECT_FALSE(state.getObject(obj_id).is_empowered)
+        << "Empowered must clear when the object leaves the board via bounce";
+}
+
 // ─── Test #3: disempower_self activation cost gate + payment ───────────────
 
 namespace {
