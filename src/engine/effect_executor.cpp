@@ -1042,7 +1042,7 @@ void EffectExecutor::predict(PlayerId player, int count) {
 }
 
 std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int count,
-                                                          RestDestination /*rest*/) {
+                                                          RestDestination rest) {
     auto& ps = state_.player(player);
     // Void Hatchling (341): peek top, may recycle before revealing (see revealUntil).
     if (ps.has_reveal_peek && !ps.main_deck.empty() && agent_query_) {
@@ -1115,6 +1115,13 @@ std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int c
                 obj.zone = ZoneType::Hand;
                 chosen_cards.push_back(card_id);
                 events_.logTrace("  CHOSE: draw " + obj.name);
+            } else if (rest == RestDestination::Trash) {
+                // Non-chosen cards go to trash in their revealed order
+                // (Lightning Rush — Kennen spec §6/addendum #4).
+                obj.zone = ZoneType::Trash;
+                obj.location = std::nullopt;
+                ps.trash.push_back(card_id);
+                events_.logTrace("  CHOSE: trash " + obj.name);
             } else {
                 // Recycle to bottom
                 ps.main_deck.insert(ps.main_deck.begin(), card_id);

@@ -3,6 +3,8 @@
 ///
 /// Task 6: Burn N (CR 440) + shared burn-out (CR 431.2/431.3), driven
 /// directly through EffectExecutor::burnCards.
+/// Task 7: revealAndChoose's rest-destination parameter (Recycle | Trash),
+/// which Lightning Rush (card tests land in Task 8) needs set to Trash.
 
 #include "tests/cards/card_test_fixture.h"
 
@@ -85,6 +87,81 @@ TEST_F(KennenCardsTest, BurnCards_EmptyDeckMidBurn_BurnsOutThenContinues) {
     EXPECT_EQ(state.player(P1).main_deck.size(), 2u);
     EXPECT_TRUE(inDeck(P1, trash1));
     EXPECT_TRUE(inDeck(P1, trash2));
+}
+
+// ─── Task 7, Step 1 — revealAndChoose(rest=Trash): non-chosen go to trash ────
+
+TEST_F(KennenCardsTest, RevealAndChoose_TrashRest_NonChosenGoToTrashInRevealedOrder) {
+    // Deck reads [bottom=A, middle=B, top=C]. Revealed order (top to
+    // bottom, as revealAndChoose pops back()) is [C, B, A].
+    auto a = addToDeck(P1, 1);
+    auto b = addToDeck(P1, 1);
+    auto c = addToDeck(P1, 1);
+    ASSERT_EQ(state.player(P1).main_deck.back(), c);
+
+    EffectExecutor exec(state, events, card_db);
+    int cards_drawn_events = 0;
+    int last_drawn_count = 0;
+    events.on_cards_drawn.connect([&](const CardsDrawnEvent& e) {
+        ++cards_drawn_events;
+        last_drawn_count = e.count;
+    });
+
+    // revealAndChoose queries the agent once PER revealed card (draw vs
+    // skip), in revealed order [C, B, A]. Choosing "index 1" means: skip
+    // C (call 0), draw B (call 1), skip A (call 2).
+    int call = 0;
+    exec.setAgentQuery([&](PlayerId, const std::vector<Intent>& choices) {
+        // choices = {draw_it, skip_it}.
+        Intent picked = (call == 1) ? choices[0] : choices[1];
+        ++call;
+        return picked;
+    });
+
+    auto chosen = exec.revealAndChoose(P1, 3, EffectExecutor::RestDestination::Trash);
+
+    ASSERT_EQ(chosen.size(), 1u);
+    EXPECT_EQ(chosen[0], b);
+    EXPECT_TRUE(inHand(P1, b));
+
+    // Non-chosen cards go to trash in their REVEALED order: [C, A].
+    ASSERT_EQ(state.player(P1).trash.size(), 2u);
+    EXPECT_EQ(state.player(P1).trash[0], c);
+    EXPECT_EQ(state.player(P1).trash[1], a);
+    EXPECT_EQ(state.getObject(c).zone, ZoneType::Trash);
+    EXPECT_FALSE(state.getObject(c).location.has_value());
+    EXPECT_EQ(state.getObject(a).zone, ZoneType::Trash);
+    EXPECT_FALSE(state.getObject(a).location.has_value());
+
+    // Deck is fully consumed by the reveal.
+    EXPECT_EQ(deckSize(P1), 0);
+
+    // The chosen card is a DRAW: draws_this_turn bumped, one CardsDrawnEvent.
+    EXPECT_EQ(state.player(P1).draws_this_turn, 1);
+    EXPECT_EQ(cards_drawn_events, 1);
+    EXPECT_EQ(last_drawn_count, 1);
+}
+
+// ─── Task 7 regression — default Recycle behaviour is untouched ─────────────
+
+TEST_F(KennenCardsTest, RevealAndChoose_DefaultRest_StillRecyclesToBottom) {
+    auto a = addToDeck(P1, 1);
+    auto b = addToDeck(P1, 1);
+    ASSERT_EQ(state.player(P1).main_deck.back(), b);
+
+    EffectExecutor exec(state, events, card_db);
+    // Always skip -> both cards recycled to the bottom, none chosen.
+    exec.setAgentQuery([](PlayerId, const std::vector<Intent>& choices) {
+        return choices[1];  // skip_it
+    });
+
+    auto chosen = exec.revealAndChoose(P1, 2);  // default RestDestination::Recycle
+
+    EXPECT_TRUE(chosen.empty());
+    EXPECT_TRUE(state.player(P1).trash.empty());
+    EXPECT_EQ(deckSize(P1), 2);
+    EXPECT_TRUE(inDeck(P1, a));
+    EXPECT_TRUE(inDeck(P1, b));
 }
 
 }  // namespace
