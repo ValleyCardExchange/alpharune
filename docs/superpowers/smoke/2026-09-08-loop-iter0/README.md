@@ -59,3 +59,13 @@ The playbook derived from them lives in personal-ai's vault
 `.prior.json` twin), which is the single source of truth; this directory
 holds only the batch record. The L5 acceptance run (prior-injected Kennen,
 same seeds, same binary) is recorded in `acceptance.md` when it lands.
+
+## Known limitation found after the batch (spec addendum #18)
+
+The equip payers recycle an exhausted rune without clearing its
+exhausted flag, and channeling never resets it, so a Chaos rune recycled
+for a Last Rites equip while exhausted can return to Kennen's base still
+flagged exhausted for a turn. Last Rites is the only equip gear in either
+batch deck; the effect is a small bias against Kennen on those turns, not
+a burst, and the batch is kept valid with this note. Fix queued as plan
+task L0d.

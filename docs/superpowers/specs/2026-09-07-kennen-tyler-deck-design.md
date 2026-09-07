@@ -559,6 +559,21 @@ it is linked from.
     underpaid must be rejected rather than executed; and the priors
     loader must throw the documented `runtime_error` for non-numeric
     values.
+18. **(replay-loop iteration 0, 2026-09-07 — review of #17; QUEUED, not
+    built)** Two pre-existing holes the L0c review confirmed, neither in
+    the Kennen / Rengar batch decks: (a) `ActivationCost::power` /
+    `power_domain` is never checked by the activation generator nor paid
+    by `executeIntent` — five shipped cards carry it (Treasure Trove 186,
+    Assembly Rig 342, Azir Ascendant 373, Ezreal Dashing 404, Xerath Freed
+    588), so Treasure Trove's `[P],[E]: Kill this` executes with no Chaos
+    power; (b) the equip payers (`payEquipCost`, `payOnePower`) recycle an
+    exhausted rune WITHOUT clearing `is_exhausted`, and `channelRunes`
+    never resets it, so a rune recycled while exhausted can re-enter the
+    base still flagged exhausted and sit unusable for a turn — the
+    canonical `payAdditionalCost` clears it; the equip payers must too.
+    Both are task L0d in the plan; until it lands, the iteration-0 batch
+    record notes (b) as a known small bias on Last Rites turns (the only
+    equip in the batch decks; a recycled Chaos rune may return exhausted).
 
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board

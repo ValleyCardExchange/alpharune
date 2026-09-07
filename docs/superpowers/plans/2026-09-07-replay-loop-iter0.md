@@ -117,6 +117,25 @@ unchanged, `test_equipment.cpp` untouched, no card-name logic in the
 engine. Commit subject: `Engine: equip legality per target, no rune
 double-spend, activation status reported explicitly`.
 
+### L0d — QUEUED: activation power costs and recycled-rune exhaustion (spec addendum #18)
+Files: `src/engine/game_engine.cpp` (activation generators gate on the
+ability's power cost via the engine's canonical power-availability check;
+`executeIntent` pays it through the canonical payer, before any state
+change, alongside the energy pre-check), `src/cards/gear/equip_base.h`
+and `src/cards/card_helpers.h` (every equip payer clears `is_exhausted`
+on the rune it recycles, exactly as `payAdditionalCost` does — one shared
+recycle helper so the three payers cannot drift), tests in
+`tests/cards/test_equip_legality.cpp` and `tests/cards/
+test_closed_state_abilities.cpp` (extend) plus a registry-wide guard that
+every shipped ability with a power cost is neither offered nor executed
+with no matching power available.
+Tests (RED first): Treasure Trove with no Chaos rune → not offered,
+hand-built intent rejected, gear not killed; with one → offered, pays,
+executes; a rune recycled while exhausted returns to the rune deck ready
+and, when channeled back, is usable that turn; the guard names any
+power-cost ability that escapes the gate.
+Not started in iteration 0 — Tyler chooses when.
+
 ### L4 — `prior=` injection
 Files: modify `src/agents/agent_spec.h/.cpp`, `src/agents/mcts_agent.h/.cpp`,
 `src/agents/corpus_evaluator.h/.cpp`, `src/main.cpp`; tests in
