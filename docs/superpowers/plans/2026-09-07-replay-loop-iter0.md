@@ -34,6 +34,49 @@ commit the summaries under `docs/superpowers/smoke/2026-09-08-loop-iter0/`;
 Claude reads `summary.md` + the top mistake candidates and writes the
 vault playbook + priors JSON in personal-ai (its own commit there).
 
+### L0b — engine fixes surfaced by the loop (spec addenda #15 and #16)
+Addendum #15 (closed-state ability activations) landed as `8b26d29`. This
+task is addendum #16 — equip legality.
+Files: `src/cards/card.h` (a `canEquip` legality predicate on `Card`,
+const, taking the game state and the controller; default `true` so the
+registry guard below names every gear that forgets it), `src/cards/gear/
+equip_base.h` (extract the standard pre-check into a shared predicate
+used by BOTH `standardEquip` and `SimpleEquipGear::canEquip`; a sibling
+predicate for `UniversalEquipGear` — ready runes cover the energy AND at
+least one rune remains in base to recycle, exhausted allowed), `src/cards/
+card_helpers.h` (`payOnePower` loses its ready-only condition per CR
+164.2.b and prefers an exhausted rune, mirroring the engine's canonical
+payer; a matching `canPayOnePower` predicate), every hand-written equip
+gear (`0471` Last Rites, `0508`, `0601`, `0412`, `0498`, `0720`, `0460`,
+`0748`, `0382`, `0365`) gains `canEquip` mirroring its existing pre-check
+and calls it first in `onEquip` (single source of truth per card — no
+duplicated conditions), `src/engine/game_engine.cpp`
+(`generateMainPhaseActions` equip block skips gear whose `canEquip` is
+false; `executeIntent` logs a warning naming the gear when `onEquip`
+returns false), new `tests/cards/test_equip_legality.cpp`.
+Behaviors: an unpayable equip is never offered; a payable one is offered
+exactly as before; `onEquip` never mutates state when it returns false;
+an exhausted rune can be recycled for power.
+Tests (RED first, each): (1) registry guard — every registered card with
+`hasEquipAbility` reports `canEquip == false` on a state with no runes in
+base, empty trash, 0 XP, and the failure message names the gear; (2)
+registry guard — on that state `onEquip` returns false for each and a
+snapshot of trash/main-deck/rune-deck/rune exhaustion/XP is unchanged;
+(3) Last Rites: two trash cards + only an EXHAUSTED Chaos rune → offered,
+equips, trash −2, the Chaos rune recycled, gear attached; two trash + no
+Chaos rune → not offered, `onEquip` false, trash unchanged; one trash +
+Chaos rune → not offered; (4) generator: an unattached unpayable Last
+Rites yields no ActivateAbility intent with that ability source; payable
+yields one per friendly unit; (5) faithfulness: Soul Sword equips with
+every Calm rune exhausted; (6) executor: a hand-built unpayable equip
+intent through `testHook_executeIntent` emits a warning log event and
+leaves the snapshot unchanged (capture pattern as in
+`test_closed_state_abilities.cpp`).
+Existing suites `test_equipment.cpp` and the audit-fix suites must stay
+green unchanged. Coverage gate unchanged. Commit subject: `Engine: equip
+offers gated by Card::canEquip; rejected equips warn; power recycle per
+CR 164.2.b`.
+
 ### L4 — `prior=` injection
 Files: modify `src/agents/agent_spec.h/.cpp`, `src/agents/mcts_agent.h/.cpp`,
 `src/agents/corpus_evaluator.h/.cpp`, `src/main.cpp`; tests in

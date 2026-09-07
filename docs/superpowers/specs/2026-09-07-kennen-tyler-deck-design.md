@@ -508,6 +508,36 @@ it is linked from.
     with Kennen). The live hidden-reveal path now emits
     `PlayedFromFacedownEvent`; the dead `executePlayFromHidden` is
     removed.
+15. **(replay-loop iteration 0, 2026-09-07 — found by the L1+L2 review)**
+    The closed-state "second executor" family (addendum #14) had a third
+    member: `ActivateReactionAbility` in the closed state was never
+    executed at all (`ChainManager::stepExecuteAndPass` fell through), so
+    Seal of Discord's `[E]: [Reaction] — Add [P]` — Kennen's power engine
+    — was offered, chosen, and silently dropped, up to `kMaxPriorityPasses`
+    times per priority window. The showdown path had the twin hole
+    (`executeIntent`'s activation case lacked the Reaction type). Fixed
+    test-first (commit `8b26d29`): closed-state activations route through
+    `executeIntent` via an injected callback like `setPlaySpell` /
+    `setPlayCard`; a rejected activation is logged, never silent. CR 429.2
+    immediate resolution for `[Add]` abilities remains unmodelled (every
+    activation still goes on the chain) — a whole-class ruling for later.
+16. **(replay-loop iteration 0, 2026-09-07 — found by the controller's
+    post-fix smoke)** The main-phase EQUIP generator offers every
+    unattached friendly gear with no affordability check, and
+    `executeIntent` drops `onEquip() == false` silently. With
+    `kMainPhaseMaxActions = 500`, one unpayable Last Rites consumed
+    Kennen's ENTIRE turn (497 repeats) whenever it sat unequipped with no
+    Chaos rune in base — every earlier Kennen batch is contaminated in
+    those games. Ruling (faithful, generic): `Card::canEquip` is the one
+    legality predicate the generator gates on and `onEquip` checks first,
+    so payment is all-or-nothing by construction; a rejected equip logs a
+    warning. Two card-level faithfulness fixes ride along: Last Rites
+    recycled two trash cards BEFORE its power check (partial payment), and
+    `card_helpers`' one-power payer required a READY rune, contradicting
+    CR 164.2.b ("Recycle this: [Reaction] — Add [C]" — no readiness
+    condition) and the engine's own canonical payer. A registry-wide guard
+    test asserts every equip gear reports unpayable on an empty-resource
+    state and leaves it untouched.
 
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board
