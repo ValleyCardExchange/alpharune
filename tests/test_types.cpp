@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 #include "core/types.h"
 
+#include <cstdint>
+#include <set>
+#include <string>
+
 using namespace riftbound;
 
 TEST(TypesTest, PlayerIdOpponent) {
@@ -100,4 +104,21 @@ TEST(TypesTest, ModeOfPlayDefaults) {
     EXPECT_EQ(mode.victory_score, 8);
     EXPECT_EQ(mode.battlefield_count, 2);
     EXPECT_TRUE(mode.second_player_extra_channel);
+}
+
+// Test #27 (Kennen deck): every Keyword below Count has a non-empty, unique
+// toString, and Flow is spelled "Flow".
+TEST(TypesTest, KeywordToStringCompleteAndUnique) {
+    std::set<std::string> seen;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(Keyword::Count); ++i) {
+        const char* s = toString(static_cast<Keyword>(i));
+        ASSERT_NE(s, nullptr) << "keyword bit " << i;
+        std::string name(s);
+        EXPECT_FALSE(name.empty()) << "keyword bit " << i;
+        EXPECT_NE(name, "Unknown") << "keyword bit " << i << " has no toString case";
+        EXPECT_TRUE(seen.insert(name).second)
+            << "duplicate keyword toString \"" << name << "\" at bit " << i;
+    }
+    EXPECT_EQ(seen.size(), static_cast<size_t>(Keyword::Count));
+    EXPECT_STREQ(toString(Keyword::Flow), "Flow");
 }

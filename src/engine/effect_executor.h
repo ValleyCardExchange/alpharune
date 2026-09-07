@@ -170,9 +170,34 @@ public:
     /// Predict N: look at top N cards, agent chooses which to recycle (put back on bottom).
     void predict(PlayerId player, int count);
 
+    /// Where the NON-chosen revealed cards go in revealAndChoose.
+    /// Recycle = to the bottom of the main deck (the historical behaviour and
+    /// the default, so existing two-argument call sites are unchanged).
+    /// Trash = to the trash in their revealed order (Lightning Rush, VEN 790).
+    enum class RestDestination { Recycle, Trash };
+
     /// Reveal top N and let agent choose: draw matching cards or recycle them.
     /// Returns list of cards the agent chose to draw/play.
-    std::vector<GameObjectId> revealAndChoose(PlayerId player, int count);
+    std::vector<GameObjectId> revealAndChoose(PlayerId player, int count,
+                                              RestDestination rest = RestDestination::Recycle);
+
+    // ── Empower / Disempower (CR 441, 442) ──
+    /// Set the target's Empowered status. No-op if already empowered
+    /// (CR 441.1.c). Logs EMPOWER and emits ObjectEmpoweredEvent.
+    void empowerObject(GameObjectId target);
+    /// Clear the target's Empowered status. No-op if not empowered
+    /// (CR 442.1.a.1). Logs DISEMPOWER.
+    void disempowerObject(GameObjectId target);
+
+    // ── Burn N (CR 440) ──
+    /// Move the top card of the player's main deck to trash `count` times,
+    /// logging BURN per card. An empty deck runs burnOut() and burning
+    /// continues from the reshuffled deck (CR 440.4); if deck and trash are
+    /// both empty, stop.
+    void burnCards(PlayerId player, int count);
+    /// Reshuffle the player's trash into their main deck (the block that was
+    /// inline in GameEngine::drawCards). Shared by drawing and burning.
+    void burnOut(PlayerId player);
 
     // ── Phase C-1 commit 6 — pending-choice mechanism (in progress) ──
     //

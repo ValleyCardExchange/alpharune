@@ -2858,6 +2858,21 @@ void GameEngine::generateSpellActions(PlayerId player, bool action_ok,
     }
 }
 
+// ── Flow (CR 829) ──
+// Scaffolding only: behaviour lands test-first in a later task.
+std::vector<GameEngine::FlowOffer> GameEngine::liveFlowCosts(GameObjectId /*obj*/) const {
+    return {};
+}
+
+void GameEngine::generateFlowPlayActions(PlayerId /*player*/, bool /*action_ok*/,
+                                          bool /*reaction_ok*/,
+                                          std::vector<Intent>& /*actions*/) const {
+}
+
+Intent::PlaySource GameEngine::playSourceFor(const GameObject& /*obj*/) const {
+    return Intent::PlaySource::Hand;
+}
+
 void GameEngine::generateTrashReplayActions(PlayerId player, bool action_ok,
                                              bool reaction_ok,
                                              std::vector<Intent>& actions) const {

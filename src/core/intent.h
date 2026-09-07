@@ -82,6 +82,25 @@ struct Intent {
     // Alternative play cost (Jhin, Meticulous Killer): when true, the payment
     // path charges Card::alternativePlayCost(...) instead of the printed cost.
     bool use_alt_play_cost = false;
+
+    // Flow (CR 829): which Flow cost this play pays. None = not a flow play
+    // (pay the printed / alt cost as usual). Printed = the card's own
+    // Card::flowCost(). Granted = GameObject::granted_flow (Kennen). Both may
+    // be live at once, in which case the generator emits one intent per cost
+    // and the controller chooses (CR 829.1.c.3).
+    enum class FlowSource : uint8_t {
+        None = 0,
+        Printed,
+        Granted,
+    };
+    FlowSource flow_source = FlowSource::None;
+
+    // Sandswept Tomb (VEN): the discounted, restricted variant of a spell
+    // offer. When set, this play commits to choosing its unit target(s) at
+    // the named battlefield, and the power cost is paid with the Tomb's
+    // discount staged in PlayerState::transient_power_discount.
+    std::optional<BattlefieldId> target_battlefield_restriction;
+
     // Aura-granted activated ability (Forge/Gardens/Heimerdinger): when nonzero,
     // this ActivateAbility invokes ability_source's GRANTED ability whose logic
     // lives on card def `granted_ability_def` (0 = the source's own ability).
@@ -191,6 +210,8 @@ struct Intent {
             && ability_source == o.ability_source
             && ability_index == o.ability_index
             && play_source == o.play_source
+            && flow_source == o.flow_source
+            && target_battlefield_restriction == o.target_battlefield_restriction
             && targets == o.targets
             && damage_assignments == o.damage_assignments
             && cards_to_mulligan == o.cards_to_mulligan

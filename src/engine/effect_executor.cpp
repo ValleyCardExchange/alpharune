@@ -1062,7 +1062,8 @@ void EffectExecutor::predict(PlayerId player, int count) {
     }
 }
 
-std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int count) {
+std::vector<GameObjectId> EffectExecutor::revealAndChoose(PlayerId player, int count,
+                                                          RestDestination /*rest*/) {
     auto& ps = state_.player(player);
     // Void Hatchling (341): peek top, may recycle before revealing (see revealUntil).
     if (ps.has_reveal_peek && !ps.main_deck.empty() && agent_query_) {
@@ -1212,6 +1213,22 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
         ps.cards_played_this_turn});
     events_.emit(EnteredBoardEvent{card, player, obj.card_type,
         final_loc, true});
+}
+
+// ── Empower / Disempower (CR 441, 442) ──
+// Scaffolding only: behaviour lands test-first in a later task.
+void EffectExecutor::empowerObject(GameObjectId /*target*/) {
+}
+
+void EffectExecutor::disempowerObject(GameObjectId /*target*/) {
+}
+
+// ── Burn N (CR 440) ──
+// Scaffolding only: behaviour lands test-first in a later task.
+void EffectExecutor::burnCards(PlayerId /*player*/, int /*count*/) {
+}
+
+void EffectExecutor::burnOut(PlayerId /*player*/) {
 }
 
 } // namespace riftbound

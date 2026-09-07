@@ -121,6 +121,7 @@ struct PlayerState {
     bool grant_repeat_base_to_next_spell = false; // The Academy (772): next spell gets [Repeat] at tranche cost = its base energy
     int zilean_double_token_turn = -1;         // Zilean, Time Mage (648): turn on which the once/turn token-doubling was used
     int transient_play_discount = 0;           // Irelia, Graceful (462): energy discount staged just before paying a specific spell (set+consumed in executePlaySpell)
+    int transient_power_discount = 0;          // Sandswept Tomb (VEN): POWER discount staged just before paying a specific spell (set+consumed in executePlaySpell); mirrors transient_play_discount
     // Phase 6q+ engine-audit follow-on: reset last_spell_energy_spent
     // at turn start. Pre-fix, a Virtuoso/Forgotten Library trigger that
     // fires off a turn-N spell could be delayed (via chain priority)
@@ -223,6 +224,7 @@ struct PlayerState {
         next_spell_bonus_damage = 0;
         grant_repeat_base_to_next_spell = false;
         transient_play_discount = 0;
+        transient_power_discount = 0;
         power_spent_this_turn = 0;
         xp_gained_this_turn = 0;
         hold_points_this_turn = 0;
@@ -283,6 +285,13 @@ struct BattlefieldState {
     // still move to other battlefields (with Ganking). Honored by
     // GameEngine::generateMainPhaseActions when emitting BF→Base moves.
     bool blocks_move_to_base = false;
+
+    // Spell-cost discount (Sandswept Tomb, VEN): "Each spell that chooses one
+    // or more units here that are friendly to it costs [A] less." Set by the
+    // Tomb's applyPassiveAura on its own battlefield; reset to 0 with the
+    // other BF aura flags in the aura-recompute reset step. "Friendly" is
+    // relative to the spell's controller, so both players benefit.
+    int friendly_spell_power_discount = 0;
 
     // Play-location restriction (Rockfall Path [530]). When true, no
     // unit/gear may be played to this battlefield. Honored by play-
@@ -376,8 +385,18 @@ struct ChainItem {
     // Targeting
     std::vector<GameObjectId> targets;
 
+    // Sandswept Tomb (VEN): when set, this spell was played with the
+    // discounted, battlefield-restricted offer — pickTarget at resolve
+    // filters the legal list to units at this battlefield, so a resolve-time
+    // choice cannot dodge the discount's condition.
+    std::optional<BattlefieldId> target_battlefield_restriction;
+
     // Classification
     bool is_spell = false;        // true for spells (go to trash on resolve)
+    // Flow (CR 829.1.b.1): a spell played for its Flow cost is BANISHED on
+    // leaving the chain, not trashed. Set by executePlaySpell on a flow play;
+    // consulted by ChainManager::stepResolve and by the counter/revert path.
+    bool banish_on_leave = false;
     bool is_permanent = false;    // true for units/gear (resolve on finalize, CR 337.1.c)
     bool is_ability = false;      // true for activated/triggered abilities
 

@@ -11,6 +11,9 @@
 ///
 /// Uses Boost.Signals2 for thread-safe signal/slot connections.
 
+// Intent::PlaySource rides on CardPlayedEvent. intent.h includes only
+// types.h, so this adds no include cycle.
+#include "intent.h"
 #include "types.h"
 
 #include <boost/signals2.hpp>
@@ -52,6 +55,14 @@ struct TokenCreatedEvent {
     CardType card_type;
     std::string token_type;  // "Recruit", "Sprite", etc.
     LocationId location;
+};
+
+/// An object became Empowered (CR 441.2.a). Emitted by
+/// EffectExecutor::empowerObject only on the false→true transition;
+/// re-empowering an already-empowered object emits nothing (CR 441.1.c).
+struct ObjectEmpoweredEvent {
+    GameObjectId object;
+    PlayerId controller;
 };
 
 /// A game object left the board (killed, recycled, returned to hand, etc).
@@ -104,6 +115,11 @@ struct CardPlayedEvent {
     // for the "if you spent [4] or more" gate. For non-spells (units/gear)
     // this is just the base energy_cost.
     int energy_spent = 0;
+
+    // Where the card was played FROM, derived from the object's zone at
+    // execution time by GameEngine::playSourceFor. Hand for a normal play;
+    // anything else feeds TriggerType::WhenYouPlayFromNonHand.
+    Intent::PlaySource play_source = Intent::PlaySource::Hand;
 };
 
 /// A rune was channeled from rune deck to base.
@@ -316,6 +332,7 @@ public:
     boost::signals2::signal<void(const UnitMovedEvent&)>          on_unit_moved;
     boost::signals2::signal<void(const EnteredBoardEvent&)>       on_entered_board;
     boost::signals2::signal<void(const TokenCreatedEvent&)>      on_token_created;
+    boost::signals2::signal<void(const ObjectEmpoweredEvent&)>   on_object_empowered;
     boost::signals2::signal<void(const LeftBoardEvent&)>          on_left_board;
     boost::signals2::signal<void(const DamageDealtEvent&)>        on_damage_dealt;
     boost::signals2::signal<void(const UnitDiedEvent&)>           on_unit_died;
@@ -357,6 +374,7 @@ public:
     void emit(const UnitMovedEvent& e)          { on_unit_moved(e); }
     void emit(const EnteredBoardEvent& e)       { on_entered_board(e); }
     void emit(const TokenCreatedEvent& e)      { on_token_created(e); }
+    void emit(const ObjectEmpoweredEvent& e)   { on_object_empowered(e); }
     void emit(const LeftBoardEvent& e)          { on_left_board(e); }
     void emit(const DamageDealtEvent& e)        { on_damage_dealt(e); }
     void emit(const UnitDiedEvent& e)           { on_unit_died(e); }

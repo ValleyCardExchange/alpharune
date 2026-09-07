@@ -175,6 +175,10 @@ enum class TriggerType : uint8_t {
     WhenAFriendlyUnitMovesFromMyLocation, // Stealthy Pursuer
     WhenAFriendlyUnitChosenHere, // The Dreaming Tree (BF-scoped, first/turn -> draw 1)
     WhenYouKillAUnitWithASpell,  // Immortal Phoenix (play from trash)
+    WhenYouPlayFromNonHand,      // Heart of the Tempest (VEN 788) — "When you
+                                 // play a card from anywhere other than your
+                                 // hand". Fired by TriggerManager::onCardPlayed
+                                 // when CardPlayedEvent::play_source != Hand.
 };
 
 // ─── Conditions ─────────────────────────────────────────────────────────────
@@ -263,6 +267,10 @@ struct ActivationCost {
     bool discard = false;       // "Discard 1,"
     int discard_count = 0;
     int xp_cost = 0;            // "Spend N XP" (deducts from controller's PlayerState.xp)
+    bool disempower_self = false; // CR 828 — "Disempower me:" as a cost. The
+                                  // ability is only OFFERED while the source is
+                                  // empowered; payment calls
+                                  // EffectExecutor::disempowerObject(source).
 };
 
 // ─── Complete effect script ─────────────────────────────────────────────────

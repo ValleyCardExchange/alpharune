@@ -511,6 +511,35 @@ private:
     void generateTrashReplayActions(PlayerId player, bool action_ok,
                                      bool reaction_ok,
                                      std::vector<Intent>& actions) const;
+
+    // ── Flow (CR 829) ──
+    /// One live Flow cost for an object, tagged with the permission it came
+    /// from so the emitted Intent can name the cost the player picked.
+    struct FlowOffer {
+        Intent::FlowSource source = Intent::FlowSource::None;
+        Card::FlowCost cost;
+    };
+    /// Every Flow cost currently live on `obj`: the printed one (the object
+    /// has Keyword::Flow) and/or the granted one (GameObject::granted_flow
+    /// whose valid_on_turn matches the current turn). Both may be live at
+    /// once, and the controller chooses between them (CR 829.1.c.3).
+    std::vector<FlowOffer> liveFlowCosts(GameObjectId obj) const;
+
+    /// Emits Play intents (play_source=Trash, flow_source set) for spells in
+    /// the player's trash with a live Flow cost — one intent per live cost.
+    /// Mirrors generateSpellActions' timing gate + target shapes, checking
+    /// affordability against the flow cost rather than the printed cost.
+    /// Called next to generateTrashReplayActions at both call sites.
+    void generateFlowPlayActions(PlayerId player, bool action_ok,
+                                  bool reaction_ok,
+                                  std::vector<Intent>& actions) const;
+
+    /// The zone an object is being played FROM, mapped to a PlaySource, so
+    /// every CardPlayedEvent emit site tags the play the same way (Hand →
+    /// Hand, Trash → Trash, ChampionZone → ChampionZone, Banishment →
+    /// Banishment, hidden-at-battlefield → Hidden, Chain → ChainZone).
+    Intent::PlaySource playSourceFor(const GameObject& obj) const;
+
     void generateActivateAbilityActions(PlayerId player,
                                          std::vector<Intent>& actions) const;
 

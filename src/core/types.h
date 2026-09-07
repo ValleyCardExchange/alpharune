@@ -103,7 +103,8 @@ enum class Keyword : uint32_t {
     Unique       = 20,
     Vision       = 21,
     Weaponmaster = 22,
-    Count        = 23,
+    Flow         = 23,   // CR 829 — alternate cost payable from the trash
+    Count        = 24,
 };
 
 // Fixed-size keyword bitset
