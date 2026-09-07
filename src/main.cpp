@@ -30,6 +30,7 @@
 #include "core/version.h"
 #include "engine/batch_runner.h"
 #include "engine/game_engine.h"
+#include "io/decision_log_writer.h"
 #include "io/play_server.h"
 #include "io/replay_writer.h"
 #include "io/state_renderer.h"
@@ -303,6 +304,13 @@ int main(int argc, char* argv[]) {
         ("replay-dir", po::value<std::string>()->default_value("replays"),
          "Directory for HTML replay output. Single-game writes "
          "<dir>/<timestamp>/replay.html; batch writes <dir>/replay_gameN.html.")
+        ("decision-log", po::value<std::string>()->default_value(""),
+         "Directory for machine-readable per-decision JSON logs (the L1 "
+         "replay-analysis-loop artifact; see "
+         "docs/superpowers/specs/2026-09-07-replay-loop-iter0-design.md). "
+         "Empty (default) = off. One file per game: "
+         "<dir>/game_<index>_seed_<seed>.json. Independent of --render-html "
+         "— both may be on. Works in single-game and --games N batch mode.")
         ("debug", po::bool_switch()->default_value(false),
          "Stream debug-level engine events (trigger firings, ability resolution). "
          "Implied when any seat is human.")
@@ -356,6 +364,7 @@ int main(int argc, char* argv[]) {
     auto seed          = vm["seed"].as<uint64_t>();
     auto render_mode   = vm["render-html"].as<std::string>();
     auto replay_dir    = vm["replay-dir"].as<std::string>();
+    auto decision_log_dir = vm["decision-log"].as<std::string>();
     bool debug_mode    = vm["debug"].as<bool>();
     bool trace_mode    = vm["trace"].as<bool>();
     int  num_games     = vm["games"].as<int>();
@@ -537,6 +546,16 @@ int main(int argc, char* argv[]) {
         cfg.agent1_spec   = spec1.raw;
         cfg.agent2_spec   = spec2.raw;
         cfg.agent_factory = std::move(factory);
+        cfg.decision_log_dir = decision_log_dir;
+        cfg.deck1_path    = deck1_path;
+        cfg.deck2_path    = deck2_path;
+        if (!decision_log_dir.empty()) {
+            // Create once, up front — GameRunner instances for --games N
+            // run on a thread pool, and racing fs::create_directories from
+            // multiple worker threads on the same not-yet-existing path is
+            // avoidable, so avoid it.
+            fs::create_directories(decision_log_dir);
+        }
 
         AggregateResults results;
         BatchRunner batch(card_db, card_registry, num_threads);
@@ -604,14 +623,41 @@ int main(int argc, char* argv[]) {
             [rp = replay.get(), &renderer, &engine](const PhaseChangedEvent& e) {
                 rp->recordPhaseSeam(engine.state(), e.old_phase, e.new_phase, renderer);
             });
-        engine.on_decision = [rp = replay.get(), &renderer](
-                                 const GameState& s,
-                                 const std::vector<Intent>& actions,
-                                 const Intent& chosen) {
-            rp->recordDecision(s, actions, chosen, renderer);
-        };
         std::cout << "Replay will be written to " << replay_path << "\n";
     }
+
+    // ── Decision-log writer (--decision-log), independent of --render-html ──
+    std::unique_ptr<DecisionLogWriter> decision_log;
+    std::string decision_log_path;
+    if (!decision_log_dir.empty()) {
+        decision_log_path = (fs::path(decision_log_dir) /
+            ("game_0_seed_" + std::to_string(game_seed) + ".json")).string();
+
+        DecisionLogHeader header;
+        header.deck1.path     = deck1_path;
+        header.deck1.legend   = card_db.get(deck1.legend).name;
+        header.deck1.champion = card_db.get(deck1.chosen_champion).name;
+        header.deck2.path     = deck2_path;
+        header.deck2.legend   = card_db.get(deck2.legend).name;
+        header.deck2.champion = card_db.get(deck2.chosen_champion).name;
+        header.agent1_spec    = spec1.raw;
+        header.agent2_spec    = spec2.raw;
+        header.seed           = game_seed;
+        header.engine_version = kVersionTag;
+
+        decision_log = std::make_unique<DecisionLogWriter>(decision_log_path, std::move(header));
+        std::cout << "Decision log will be written to " << decision_log_path << "\n";
+    }
+
+    // Single callback feeds both writers — either, both, or neither may be
+    // active; each writer no-ops when absent.
+    engine.on_decision = [rp = replay.get(), dl = decision_log.get(), &renderer](
+                             const GameState& s,
+                             const std::vector<Intent>& actions,
+                             const Intent& chosen) {
+        if (rp) rp->recordDecision(s, actions, chosen, renderer);
+        if (dl) dl->recordDecision(s, actions, chosen);
+    };
 
     // ── Web server (optional) ─────────────────────────────────────────────
     std::unique_ptr<PlayServer> server;
@@ -673,6 +719,12 @@ int main(int argc, char* argv[]) {
                 replay->addTraceLine("[TRC] GAME_OVER: " + result.termination_reason);
                 replay->writeHtml();
                 std::cout << "Replay saved to " << replay_path << "\n";
+            }
+            if (decision_log) {
+                decision_log->finish(result.winner, result.termination_reason,
+                                      result.total_turns, result.final_scores,
+                                      result.total_decisions);
+                std::cout << "Decision log saved to " << decision_log_path << "\n";
             }
         } catch (const std::exception& e) {
             std::cerr << "[engine] exception: " << e.what() << "\n";

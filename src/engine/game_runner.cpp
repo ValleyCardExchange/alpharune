@@ -1,8 +1,11 @@
 #include "game_runner.h"
 #include "agents/random_agent.h"
+#include "core/version.h"
+#include "io/decision_log_writer.h"
 #include "io/replay_writer.h"
 #include "io/state_renderer.h"
 
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -93,6 +96,29 @@ GameResult GameRunner::run() {
             });
     }
 
+    // Set up decision-log writer (L1 replay-analysis loop). Independent of
+    // do_render/replay above — both may be on at once.
+    std::unique_ptr<DecisionLogWriter> decision_log;
+    if (!config_.decision_log_dir.empty()) {
+        std::string path = (std::filesystem::path(config_.decision_log_dir) /
+            ("game_" + std::to_string(config_.game_index) +
+             "_seed_" + std::to_string(game_seed) + ".json")).string();
+
+        DecisionLogHeader header;
+        header.deck1.path = config_.deck1_path;
+        header.deck1.legend = card_db_.get(deck1_.legend).name;
+        header.deck1.champion = card_db_.get(deck1_.chosen_champion).name;
+        header.deck2.path = config_.deck2_path;
+        header.deck2.legend = card_db_.get(deck2_.legend).name;
+        header.deck2.champion = card_db_.get(deck2_.chosen_champion).name;
+        header.agent1_spec = config_.agent1_spec;
+        header.agent2_spec = config_.agent2_spec;
+        header.seed = game_seed;
+        header.engine_version = kVersionTag;
+
+        decision_log = std::make_unique<DecisionLogWriter>(path, std::move(header));
+    }
+
     // Agent factory. If config_.agent_factory is supplied, defer to it —
     // that's how the riftbound binary plugs in MCTS / IsMCTS (their
     // constructors live in the executable's TU because they pull in
@@ -121,12 +147,17 @@ GameResult GameRunner::run() {
     auto agent1 = makeAgent(0, config_.agent1_spec);
     auto agent2 = makeAgent(1, config_.agent2_spec);
 
-    // Decision callback feeds the HTML replay writer when --render is on.
+    // Decision callback feeds the HTML replay writer (--render) and the
+    // decision-log writer (--decision-log). Either, both, or neither may
+    // be active; each writer no-ops when absent.
     engine.on_decision = [&](const GameState& state,
                               const std::vector<Intent>& actions,
                               const Intent& chosen) {
         if (replay) {
             replay->recordDecision(state, actions, chosen, renderer);
+        }
+        if (decision_log) {
+            decision_log->recordDecision(state, actions, chosen);
         }
     };
 
@@ -136,6 +167,11 @@ GameResult GameRunner::run() {
     if (replay) {
         replay->addTraceLine("[TRC] GAME_OVER: " + result.termination_reason);
         replay->writeHtml();
+    }
+    if (decision_log) {
+        decision_log->finish(result.winner, result.termination_reason,
+                              result.total_turns, result.final_scores,
+                              result.total_decisions);
     }
 
     // Update aggregate results (atomic)

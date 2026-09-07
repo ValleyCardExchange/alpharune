@@ -32,6 +32,17 @@ struct GameConfig {
     std::string agent1_spec = "random";
     std::string agent2_spec = "random";
 
+    // L1 replay-analysis loop (docs/superpowers/specs/2026-09-07-replay-loop-iter0-design.md):
+    // machine-readable per-decision JSON log. Empty = off. When set, one
+    // file "game_<game_index>_seed_<seed>.json" is written per game under
+    // this directory. Independent of do_render — both may be on.
+    // deck1_path / deck2_path are the original .txt paths (DeckSubmission
+    // itself carries no path, only parsed CardDefIds) — needed for the
+    // log's header.
+    std::string decision_log_dir;
+    std::string deck1_path;
+    std::string deck2_path;
+
     /// Optional agent factory — when set, replaces GameRunner's built-in
     /// "random-only" factory. The seat index is 0 for P1 and 1 for P2.
     /// `game_seed` is the engine RNG seed for THIS game; the factory
