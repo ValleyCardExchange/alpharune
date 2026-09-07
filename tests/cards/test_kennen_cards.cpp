@@ -89,6 +89,39 @@ TEST_F(KennenCardsTest, BurnCards_EmptyDeckMidBurn_BurnsOutThenContinues) {
     EXPECT_TRUE(inDeck(P1, trash2));
 }
 
+// ─── Task 6 — burnCards stops consuming `count` once burn-out ends the game ──
+
+TEST_F(KennenCardsTest, BurnCards_BurnOutEndsGame_StopsWithoutBurningMore) {
+    // Deck has 1 card, trash has 1. Burning 3: the first burn empties the
+    // deck; the second burn's burn-out recycles both cards and pushes P2
+    // to (>=) victory score with more points than P1 -> game over. The
+    // third (and the rest of the second) burn must never happen.
+    auto trash_card = addToDeck(P1, 1);
+    state.player(P1).main_deck.clear();
+    state.getObject(trash_card).zone = ZoneType::Trash;
+    state.player(P1).trash.push_back(trash_card);
+    auto deck_card = addToDeck(P1, 1);
+    ASSERT_EQ(state.player(P1).main_deck.size(), 1u);
+
+    state.player(P1).score = 3;
+    state.player(P2).score = state.mode.victory_score - 1;  // one short
+
+    EffectExecutor exec(state, events, card_db);
+    exec.burnCards(P1, 3);
+
+    EXPECT_TRUE(state.game_over);
+    EXPECT_EQ(state.winner, P2);
+    EXPECT_EQ(state.player(P2).score, state.mode.victory_score);
+
+    // Burn-out recycled BOTH cards (the first burn's card + the pre-existing
+    // trash card) into the deck; the loop returned on game_over before
+    // burning anything from that reshuffled deck.
+    EXPECT_TRUE(state.player(P1).trash.empty());
+    EXPECT_EQ(state.player(P1).main_deck.size(), 2u);
+    EXPECT_TRUE(inDeck(P1, deck_card));
+    EXPECT_TRUE(inDeck(P1, trash_card));
+}
+
 // ─── Task 7, Step 1 — revealAndChoose(rest=Trash): non-chosen go to trash ────
 
 TEST_F(KennenCardsTest, RevealAndChoose_TrashRest_NonChosenGoToTrashInRevealedOrder) {

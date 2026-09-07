@@ -30,6 +30,14 @@ protected:
 
     void makeEngineAndSeedBattlefields(int n_bfs = 2) {
         engine_ = std::make_unique<GameEngine>(card_db, events, card_registry);
+        // Mirrors runGame()'s order (state_ = GameState{}; initSubsystems();
+        // ...): wire up chain_manager_/effect_executor_/trigger_manager_
+        // before touching state, so every engine test hook below (drawPhase,
+        // scoreConquer, ...) has a live effect_executor_ — same as every
+        // real game. Without this, GameEngine::drawCards's empty-deck path
+        // (which delegates to effect_executor_->burnOut()) would dereference
+        // a null unique_ptr.
+        engine_->testHook_initSubsystems();
         auto& s = *eng_state();
         s.mode = ModeOfPlay{};
         s.players[0].id = P1;

@@ -4873,29 +4873,11 @@ void GameEngine::drawCards(PlayerId player, int count) {
                                  " deck AND trash empty, cannot draw");
                 break; // truly empty — nothing to do
             }
-            if (effect_executor_) {
-                effect_executor_->burnOut(player);
-            } else {
-                // Defensive fallback, not a second copy of the burn-out
-                // LOGIC: some test-only call paths (BurnOutScoringTest's
-                // testHook_scoreConquer / testHook_drawPhase) construct a
-                // bare GameEngine and invoke internal hooks directly
-                // without ever running initSubsystems(), so effect_executor_
-                // stays null here. assert() alone doesn't help — this
-                // project's test build is Release/-DNDEBUG, so it would
-                // compile out and the call below would segfault instead
-                // (verified empirically). Route through a throwaway
-                // executor bound to this engine's own state/rng so
-                // EffectExecutor::burnOut stays the single implementation
-                // (see task-6-7-report.md for the caller audit).
-                assert(false &&
-                       "GameEngine::drawCards: effect_executor_ is null — "
-                       "initSubsystems() was not called before this draw; "
-                       "falling back to a throwaway EffectExecutor");
-                EffectExecutor temp_executor(state_, events_, card_db_, &card_registry_);
-                temp_executor.setRng(&rng_);
-                temp_executor.burnOut(player);
-            }
+            assert(effect_executor_ &&
+                   "GameEngine::drawCards requires initSubsystems() to have "
+                   "run before an empty-deck draw (burnOut lives on the "
+                   "executor)");
+            effect_executor_->burnOut(player);
             if (state_.game_over) return;
             // If deck still empty after shuffle (shouldn't happen), stop
             if (ps.main_deck.empty()) break;
