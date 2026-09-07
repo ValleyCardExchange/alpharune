@@ -1216,11 +1216,21 @@ void EffectExecutor::playIgnoringCost(PlayerId player, GameObjectId card,
 }
 
 // ── Empower / Disempower (CR 441, 442) ──
-// Scaffolding only: behaviour lands test-first in a later task.
-void EffectExecutor::empowerObject(GameObjectId /*target*/) {
+void EffectExecutor::empowerObject(GameObjectId target) {
+    if (!state_.objectExists(target)) return;
+    auto& obj = state_.getObject(target);
+    if (obj.is_empowered) return;  // CR 441.1.c — already empowered, no-op
+    obj.is_empowered = true;
+    events_.logTrace("EMPOWER: " + obj.name);
+    events_.emit(ObjectEmpoweredEvent{target, obj.controller});
 }
 
-void EffectExecutor::disempowerObject(GameObjectId /*target*/) {
+void EffectExecutor::disempowerObject(GameObjectId target) {
+    if (!state_.objectExists(target)) return;
+    auto& obj = state_.getObject(target);
+    if (!obj.is_empowered) return;  // CR 442.1.a.1 — not empowered, no-op
+    obj.is_empowered = false;
+    events_.logTrace("DISEMPOWER: " + obj.name);
 }
 
 // ── Burn N (CR 440) ──

@@ -1180,6 +1180,11 @@ void GameEngine::executeIntent(const Intent& intent) {
                 source.is_exhausted = true;
                 events_.emit(ObjectStateChangedEvent{intent.ability_source, "exhausted"});
             }
+            // Pay disempower-self cost (CR 828)
+            if (act_cost.disempower_self) {
+                events_.logTrace("ACTIVATE_COST: disempower " + source.name);
+                effect_executor_->disempowerObject(intent.ability_source);
+            }
             // Pay energy cost
             if (act_cost.energy > 0) {
                 int needed = act_cost.energy;
@@ -2454,6 +2459,7 @@ std::vector<Intent> GameEngine::generateShowdownActions(PlayerId player) const {
             const auto& ab = abilities[ai];
             if (!ab.is_action) continue;
             if (ab.cost.exhaust && obj.is_exhausted) continue;
+            if (ab.cost.disempower_self && !obj.is_empowered) continue;
 
             auto legal_targets = card->enumerateLegalTargets(
                 state_, player, static_cast<int>(ai));
@@ -2657,6 +2663,7 @@ std::vector<Intent> GameEngine::generateClosedStateActions(
                 const auto& ab = abilities[ai];
                 if (!ab.is_reaction) continue;
                 if (ab.cost.exhaust && obj.is_exhausted) continue;
+                if (ab.cost.disempower_self && !obj.is_empowered) continue;
                 int net_energy = std::max(0, ab.cost.energy -
                     card_obj->activationCostReduction(state_, player, (int)ai));
                 if (net_energy > 0 && availableEnergy(player) < net_energy) continue;
@@ -2989,6 +2996,7 @@ void GameEngine::generateActivateAbilityActions(PlayerId player,
 
             // Check activation cost: must be ready if exhaust required
             if (act_cost.exhaust && obj.is_exhausted) continue;
+            if (act_cost.disempower_self && !obj.is_empowered) continue;
             int net_energy = std::max(0, act_cost.energy -
                 card->activationCostReduction(state_, player, (int)ai));
             if (net_energy > 0 && availableEnergy(player) < net_energy) continue;

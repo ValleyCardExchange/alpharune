@@ -205,6 +205,37 @@ public:
         agents_[0] = a1;
         agents_[1] = a2;
     }
+    // Initialize the chain-execution subsystems (ChainManager,
+    // EffectExecutor, TriggerManager) without the rest of runGame's setup
+    // (deck loading, mulligans, the turn loop). A GameEngine constructed
+    // directly for a hand-built GameState (the pattern this file's other
+    // testHook_* callers use) otherwise leaves these null, since they are
+    // normally initialized per-game in runGame/resumeFromSnapshot — fine
+    // for tests that only call generateLegalActions(), but
+    // testHook_executeIntent on an ActivateAbility/ActivateActionAbility
+    // intent pays costs via effect_executor_ and resolves through
+    // chain_manager_, so tests that drive a real activation to completion
+    // need this called first. Mirrors the identical block in runGame /
+    // resumeFromSnapshot; does not touch agents_ or start a turn loop.
+    void testHook_initSubsystems() {
+        chain_manager_ = std::make_unique<ChainManager>(state_, events_, card_db_);
+        chain_manager_->setAffordCheck(
+            [this](PlayerId p, GameObjectId card) { return canAfford(p, card); });
+        chain_manager_->setPayCost(
+            [this](PlayerId p, GameObjectId card) { return payCardCost(p, card); });
+        effect_executor_ = std::make_unique<EffectExecutor>(
+            state_, events_, card_db_, &card_registry_);
+        effect_executor_->setRng(&rng_);
+        effect_executor_->setAgentQuery(
+            [this](PlayerId p, const std::vector<Intent>& actions) -> Intent {
+                return queryAgentForChain(p, actions);
+            });
+        chain_manager_->setEffectExecutor(effect_executor_.get());
+        trigger_manager_ = std::make_unique<TriggerManager>(
+            state_, events_, card_db_, *chain_manager_, card_registry_);
+        trigger_manager_->setEffectExecutor(effect_executor_.get());
+        trigger_manager_->subscribe();
+    }
 
     // CR-legal combat damage allocations a real damage step would emit.
     // Exposed in public for unit tests; the struct + implementation

@@ -123,6 +123,10 @@ std::string StateRenderer::renderPlayerSummary(const GameState& state,
        << "] [E:" << ps.rune_pool.energy
        << " P:" << ps.rune_pool.totalPower() << "]";
     ss << "\n  Legend: " << legend_name;
+    if (state.objectExists(ps.legend_zone) &&
+        state.getObject(ps.legend_zone).is_empowered) {
+        ss << " [EMPOWERED]";
+    }
 
     // Champion Zone — prominent display
     if (ps.champion_zone != kInvalidId && state.objectExists(ps.champion_zone)) {
