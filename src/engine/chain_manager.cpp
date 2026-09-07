@@ -343,67 +343,79 @@ void ChainManager::stepResolve(
     state_.chain.items.pop_back();
     state_.chain.resuming = resolved;
 
-    // Resumable resolution loop. Single-shot cards (the common case) loop
+    // Resumable resolution pump. Single-shot cards (the common case) loop
     // exactly once: resolve_spell -> Card::onResolve returns without a
     // pending choice, the while condition fails, we drop through to
     // disposal. Resumable cards (e.g. discard, predict, opponentDiscards)
     // publish a pending choice via `EffectExecutor::requestChoice` and set
     // `resuming->resume_point`; we then query the agent, record the choice
     // for the Card to read on re-entry, and re-call resolve_spell.
-    constexpr int kMaxResumeIterations = 16;
-    int iter = 0;
-    while (true) {
-        if (++iter > kMaxResumeIterations) {
-            // Safety bound — a Card stuck in a yield loop should never reach
-            // this. We bail out rather than spinning forever.
-            assert(false && "ChainManager::stepResolve: resume loop overflow");
-            break;
-        }
+    //
+    // Factored into a lambda because EVERY execution of the item — the base
+    // resolution and each paid [Repeat] tranche below — needs it. The Repeat
+    // loop used to call resolve_spell directly, so a resumable card only ever
+    // ran its `case 0` branch on a tranche: the effect never happened AND the
+    // choice it published stayed active in the executor, to be consumed by
+    // whatever card resolved next. Hard Bargain (457) — `[Reaction]` +
+    // `[Repeat] [2]`, live in the Closed State — and Called Shot (443) are
+    // the shipped cards with that shape.
+    auto runResolutionPump = [&]() {
+        constexpr int kMaxResumeIterations = 16;
+        int iter = 0;
+        while (true) {
+            if (++iter > kMaxResumeIterations) {
+                // Safety bound — a Card stuck in a yield loop should never
+                // reach this. We bail out rather than spinning forever.
+                assert(false && "ChainManager::stepResolve: resume loop overflow");
+                break;
+            }
 
-        // Re-invoke resolve_spell from `resuming`. The engine's resolveSpell
-        // dispatches through Card::onResolve / onTrigger based on
-        // is_spell / is_ability — both paths are reachable here.
-        if (resolved.is_spell || resolved.is_ability) {
-            resolve_spell(state_.chain.resuming.value());
-        }
-
-        if (!executor_ || !executor_->hasPendingChoice()) break;
-
-        auto pending = executor_->consumePendingChoice();
-        // Surface the labeled choice request in the trace BEFORE the
-        // agent picks. Pairs with the on_decision-callback-driven CHOSE
-        // logging downstream; gives a reader the WHY of a MakeChoice
-        // decision (e.g. "discard 1 (Lunar Boon)") instead of just the
-        // WHAT (e.g. "pick=[Hard Bargain(id=12)]"). Cards that don't pass
-        // a label fall back to a generic line.
-        events_.logTrace(
-            std::string("CHOICE-REQUEST: ") +
-            (pending.label.empty() ? "MakeChoice" : pending.label) +
-            " [" + std::to_string(pending.legal.size()) + " options] (" +
-            toString(pending.player) + ")");
-        Intent choice = query_agent(pending.player, pending.legal);
-        executor_->recordChoice(std::move(choice));
-        // Loop back — resolve_spell re-invokes onResolve / onTrigger; the
-        // Card reads the recorded choice via `executor.takeChoice()` in its
-        // case ≥1 branch and continues past resume_point.
-    }
-
-    // Repeat (CR 820): if `repeats_paid > 0`, re-run resolve_spell that
-    // many extra times. Each re-run reads the same item from
-    // state_.chain.resuming (still populated) — Cards see the same chain
-    // item and execute their effect again. Choices made during the extra
-    // executions follow the same Make-Relevant-Choices pattern (CR 820.2),
-    // but for now we re-use the original targets/resume_data (the
-    // simplification noted on ChainItem::repeats_paid).
-    if (state_.chain.resuming.has_value()) {
-        for (int r = 0; r < state_.chain.resuming->repeats_paid; ++r) {
-            // Reset resume_point so a resumable Card starts its case 0
-            // branch fresh on each repeat.
-            state_.chain.resuming->resume_point = 0;
-            state_.chain.resuming->resume_data.clear();
-            if (state_.chain.resuming->is_spell || state_.chain.resuming->is_ability) {
+            // Re-invoke resolve_spell from `resuming`. The engine's
+            // resolveSpell dispatches through Card::onResolve / onTrigger
+            // based on is_spell / is_ability — both paths are reachable here.
+            if (state_.chain.resuming->is_spell ||
+                state_.chain.resuming->is_ability) {
                 resolve_spell(state_.chain.resuming.value());
             }
+
+            if (!executor_ || !executor_->hasPendingChoice()) break;
+
+            auto pending = executor_->consumePendingChoice();
+            // Surface the labeled choice request in the trace BEFORE the
+            // agent picks. Pairs with the on_decision-callback-driven CHOSE
+            // logging downstream; gives a reader the WHY of a MakeChoice
+            // decision (e.g. "discard 1 (Lunar Boon)") instead of just the
+            // WHAT (e.g. "pick=[Hard Bargain(id=12)]"). Cards that don't pass
+            // a label fall back to a generic line.
+            events_.logTrace(
+                std::string("CHOICE-REQUEST: ") +
+                (pending.label.empty() ? "MakeChoice" : pending.label) +
+                " [" + std::to_string(pending.legal.size()) + " options] (" +
+                toString(pending.player) + ")");
+            Intent choice = query_agent(pending.player, pending.legal);
+            executor_->recordChoice(std::move(choice));
+            // Loop back — resolve_spell re-invokes onResolve / onTrigger; the
+            // Card reads the recorded choice via `executor.takeChoice()` in
+            // its case ≥1 branch and continues past resume_point.
+        }
+    };
+
+    runResolutionPump();
+
+    // Repeat (CR 820): if `repeats_paid > 0`, re-run the item that many extra
+    // times. Each re-run reads the same item from state_.chain.resuming
+    // (still populated) — Cards see the same chain item and execute their
+    // effect again — and goes through the SAME pump as the base resolution,
+    // so a resumable card can yield and consume a choice on every tranche
+    // (CR 820.2, Make Relevant Choices). Targets and the rest of the item are
+    // re-used as-is (the simplification noted on ChainItem::repeats_paid);
+    // only resume_point / resume_data are reset, so each tranche starts at
+    // the card's `case 0` branch with a clean slate.
+    if (state_.chain.resuming.has_value()) {
+        for (int r = 0; r < state_.chain.resuming->repeats_paid; ++r) {
+            state_.chain.resuming->resume_point = 0;
+            state_.chain.resuming->resume_data.clear();
+            runResolutionPump();
         }
     }
 
