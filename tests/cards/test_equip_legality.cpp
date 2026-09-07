@@ -29,12 +29,14 @@
 
 #include "cards/card.h"
 #include "cards/card_registry.h"
+#include "cards/gear/equip_base.h"
 #include "core/events.h"
 #include "core/game_state.h"
 #include "engine/effect_executor.h"
 #include "engine/game_engine.h"
 
 #include <algorithm>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -46,6 +48,34 @@ namespace {
 
 constexpr CardDefId kLastRites = 471;  // [Equip] — [P], Recycle 2 from trash
 constexpr CardDefId kSoulSword = 601;  // [Equip] [G]
+constexpr CardDefId kBoneshiver = 439;  // [Equip] [1][D] — energy AND power
+constexpr CardDefId kHextechGauntlets = 748;  // [Equip] [3][A] − target Might
+constexpr CardDefId kBladeOfRuinedKing = 498;  // [Equip] — [Y], kill a friendly
+
+// Test-local gear: the UniversalEquipGear shape with a NON-ZERO energy cost.
+// All three shipped [A] gears (Spinning Axe 504, Forgefire Cape 507,
+// Shurelya's Requiem 509) cost energy 0, so the "one rune cannot pay both the
+// [1] and the [A]" collision is unreachable through the registry.
+constexpr CardDefId kUniversalEnergyOne = 930;
+
+class UniversalEnergyOneGear : public UniversalEquipGear {
+public:
+    UniversalEnergyOneGear() : UniversalEquipGear(/*energy_cost=*/1) {}
+    const CardDef& def() const override { return def_; }
+private:
+    const CardDef def_ = [] {
+        CardDef d;
+        d.id = kUniversalEnergyOne;
+        d.name = "Universal Energy Test Gear";
+        d.card_type = CardType::Gear;
+        d.domains = {Domain::Fury};
+        d.energy_cost = 1;
+        d.might_bonus = 1;
+        d.keywords.set(Keyword::Equip);
+        d.ability_text = "[Equip] [1][A].";
+        return d;
+    }();
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Fixture
@@ -160,6 +190,66 @@ protected:
         s.turn.oc_state = OpenClosedState::Open;
         BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
         BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+    }
+
+    // ── The same three builders, against an arbitrary GameState ──
+    // The fixture's own addUnit / addGearOnBoard / addRune write into the
+    // fixture's `state`; the generator tests need them in the ENGINE's state,
+    // which is a different object.
+    GameObjectId addUnitIn(GameState& s, PlayerId owner, int might, int at_bf) {
+        auto id = s.createObject();
+        auto& u = s.getObject(id);
+        u.owner = owner; u.controller = owner;
+        u.card_type = CardType::Unit;
+        u.name = "Equip Target " + std::to_string(id);
+        u.base_might = might; u.current_might = might;
+        u.zone = ZoneType::BattlefieldZone;
+        u.location = BattlefieldLocation{static_cast<BattlefieldId>(at_bf)};
+        return id;
+    }
+
+    GameObjectId addGearIn(GameState& s, PlayerId owner, CardDefId def_id,
+                           int at_bf) {
+        auto id = s.createObject();
+        auto& g = s.getObject(id);
+        const auto& def = card_db.get(def_id);
+        g.owner = owner; g.controller = owner;
+        g.card_def_id = def_id;
+        g.name = def.name;
+        g.card_type = CardType::Gear;
+        g.super_type = def.super_type;
+        g.keywords = def.keywords;
+        g.domains = def.domains;
+        g.tags = def.tags;
+        g.might_bonus = def.might_bonus;
+        g.zone = ZoneType::BattlefieldZone;
+        g.location = BattlefieldLocation{static_cast<BattlefieldId>(at_bf)};
+        return id;
+    }
+
+    GameObjectId addRuneIn(GameState& s, PlayerId owner, Domain domain,
+                           bool exhausted = false) {
+        auto id = s.createObject();
+        auto& r = s.getObject(id);
+        r.owner = owner; r.controller = owner;
+        r.card_type = CardType::Rune;
+        r.name = std::string(toString(domain)) + " Rune";
+        r.domains = {domain};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{owner};
+        r.is_exhausted = exhausted;
+        return id;
+    }
+
+    /// Every equip intent the main-phase generator offers for `gear`.
+    static std::vector<Intent> equipOffersFor(GameEngine& engine,
+                                              GameObjectId gear) {
+        std::vector<Intent> out;
+        for (const auto& a : engine.generateLegalActions()) {
+            if (a.type == IntentType::ActivateAbility && a.ability_source == gear)
+                out.push_back(a);
+        }
+        return out;
     }
 };
 
@@ -490,6 +580,307 @@ TEST_F(EquipLegalityTest, Executor_RejectedEquipIntentLogsAWarningAndPaysNothing
            "re-pick the same inert intent 497 times.";
     EXPECT_EQ(fingerprintOf(s, P1), before);
     EXPECT_FALSE(s.getObject(gear).attached_to.has_value());
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (7) Boneshiver — ONE rune cannot pay both the [1] energy and the [D] power
+//
+// The engine's canonical additional-cost payer (GameEngine::payAdditionalCost
+// / canPayAdditionalCost) puts every rune it recycles for power into a
+// `recycled` set and skips it when exhausting for energy: one physical rune
+// never pays both halves of one cost. The equip payer must agree, or the two
+// disagree on the identical cost shape — canPayAdditionalCost(energy=1,
+// power=1, Body) is FALSE on a single ready Body rune while the equip path
+// used to say true and pay the whole cost off it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_F(EquipLegalityTest, Boneshiver_OneRuneCannotPayBothEnergyAndPower) {
+    Card* c = card_registry.get(kBoneshiver);
+    ASSERT_NE(c, nullptr);
+
+    // ── A: exactly one ready Body rune and nothing else → unpayable ──
+    {
+        SCOPED_TRACE("A: one ready Body rune, nothing else");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear = addGearOnBoard(P1, kBoneshiver, /*at_bf=*/0);
+        auto body = addRune(P1, Domain::Body);
+
+        EXPECT_FALSE(c->canEquip(state, P1))
+            << "the [1] exhausts a ready rune and the [D] recycles a Body "
+               "rune — with only ONE rune in base those are the same rune, "
+               "which the engine's own payer forbids.";
+
+        const auto before = fingerprint(P1);
+        CardContext ctx{state, events, exec, P1, gear};
+        EXPECT_FALSE(c->onEquip(ctx, unit));
+        EXPECT_EQ(fingerprint(P1), before);
+        EXPECT_TRUE(state.getObject(body).location.has_value())
+            << "the single rune must still be in base — nothing was payable";
+        EXPECT_FALSE(state.getObject(gear).attached_to.has_value());
+    }
+
+    // ── B: one ready Body rune + one other ready rune → equips, and the two
+    //      halves come off DIFFERENT runes ──
+    {
+        SCOPED_TRACE("B: one ready Body rune + one ready Fury rune");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear = addGearOnBoard(P1, kBoneshiver, /*at_bf=*/0);
+        auto body = addRune(P1, Domain::Body);   // the only [D] source
+        auto other = addRune(P1, Domain::Fury);  // can only pay the [1]
+
+        EXPECT_TRUE(c->canEquip(state, P1));
+        CardContext ctx{state, events, exec, P1, gear};
+        ASSERT_TRUE(c->onEquip(ctx, unit));
+
+        EXPECT_FALSE(state.getObject(body).location.has_value())
+            << "the Body rune is the only one that can pay the [D] — it must "
+               "be the one recycled";
+        ASSERT_TRUE(state.getObject(other).location.has_value())
+            << "the Fury rune pays the [1] by EXHAUSTING; it stays in base";
+        EXPECT_TRUE(state.getObject(other).is_exhausted)
+            << "exactly one rune exhausted for the [1] energy, and it is not "
+               "the one recycled for the [D]";
+        EXPECT_EQ(state.player(P1).rune_deck.size(), 1u);
+        EXPECT_EQ(readyRuneCount(P1), 0);
+        ASSERT_TRUE(state.getObject(gear).attached_to.has_value());
+        EXPECT_EQ(*state.getObject(gear).attached_to, unit);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (8) Generator — the same single-rune Boneshiver is never offered
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_F(EquipLegalityTest, Generator_BoneshiverWithASingleRuneIsNotOffered) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent a1, a2;
+    engine.testHook_setAgents(&a1, &a2);
+    engine.testHook_initSubsystems();
+    initMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    addUnitIn(s, P1, /*might=*/2, /*at_bf=*/0);
+    auto gear = addGearIn(s, P1, kBoneshiver, /*at_bf=*/0);
+    addRuneIn(s, P1, Domain::Body);
+
+    EXPECT_EQ(equipOffersFor(engine, gear).size(), 0u)
+        << "one rune cannot pay both the [1] and the [D]; offering it is the "
+           "shape that let an agent re-pick an inert intent all main phase.";
+
+    addRuneIn(s, P1, Domain::Fury);
+    EXPECT_EQ(equipOffersFor(engine, gear).size(), 1u)
+        << "with a second ready rune the cost is payable off two distinct "
+           "runes — one offer per friendly unit (one unit on this board).";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (9) Universal ([A]) equip — same collision, same rule
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_F(EquipLegalityTest, UniversalEquip_EnergyOneWithASingleRuneIsUnpayable) {
+    card_registry.registerCard(kUniversalEnergyOne,
+                               std::make_unique<UniversalEnergyOneGear>());
+    card_db.buildFromClasses(card_registry);
+
+    Card* c = card_registry.get(kUniversalEnergyOne);
+    ASSERT_NE(c, nullptr);
+
+    // ── A: one ready rune → the [1] and the [A] collide → unpayable ──
+    {
+        SCOPED_TRACE("A: a single ready rune");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear = addGearOnBoard(P1, kUniversalEnergyOne, /*at_bf=*/0);
+        auto rune = addRune(P1, Domain::Fury);
+
+        EXPECT_FALSE(c->canEquip(state, P1))
+            << "[A] recycles a rune and [1] exhausts one — with a single rune "
+               "in base those are the same rune.";
+        const auto before = fingerprint(P1);
+        CardContext ctx{state, events, exec, P1, gear};
+        EXPECT_FALSE(c->onEquip(ctx, unit));
+        EXPECT_EQ(fingerprint(P1), before);
+        EXPECT_TRUE(state.getObject(rune).location.has_value());
+        EXPECT_FALSE(state.getObject(gear).attached_to.has_value());
+    }
+
+    // ── B: two ready runes → equips off two distinct runes ──
+    {
+        SCOPED_TRACE("B: two ready runes");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear = addGearOnBoard(P1, kUniversalEnergyOne, /*at_bf=*/0);
+        addRune(P1, Domain::Fury);
+        addRune(P1, Domain::Calm);
+
+        EXPECT_TRUE(c->canEquip(state, P1));
+        CardContext ctx{state, events, exec, P1, gear};
+        ASSERT_TRUE(c->onEquip(ctx, unit));
+        EXPECT_EQ(state.player(P1).rune_deck.size(), 1u)
+            << "exactly one rune recycled for the [A]";
+        EXPECT_EQ(exhaustedRuneCount(P1), 1)
+            << "exactly one OTHER rune exhausted for the [1]";
+        EXPECT_EQ(readyRuneCount(P1), 0);
+        ASSERT_TRUE(state.getObject(gear).attached_to.has_value());
+    }
+
+    // ── C: the generator never offers the single-rune case ──
+    {
+        SCOPED_TRACE("C: generator");
+        GameEngine engine(card_db, events, card_registry);
+        FirstChoiceAgent a1, a2;
+        engine.testHook_setAgents(&a1, &a2);
+        engine.testHook_initSubsystems();
+        initMainPhase(engine);
+        auto& s = engine.mutableState();
+        addUnitIn(s, P1, /*might=*/2, /*at_bf=*/0);
+        auto gear = addGearIn(s, P1, kUniversalEnergyOne, /*at_bf=*/0);
+        addRuneIn(s, P1, Domain::Fury);
+        EXPECT_EQ(equipOffersFor(engine, gear).size(), 0u);
+        addRuneIn(s, P1, Domain::Calm);
+        EXPECT_EQ(equipOffersFor(engine, gear).size(), 1u);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (10) Hextech Gauntlets — legality is PER TARGET when the cost is
+//
+// "[Equip] [3][A]. This ability's Energy cost is reduced by the Might of the
+// unit you choose." A target-agnostic `canEquip` answers for the CHEAPEST
+// legal target, so the gear was offered against every friendly unit including
+// ones it could not afford — the executor rejected each one and the intent
+// stayed legal, which is the offered-then-rejected-forever burst again, just
+// audible. `canEquipTarget` is the per-(gear, unit) predicate the generator's
+// per-unit branch now gates on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_F(EquipLegalityTest, HextechGauntlets_OnlyTheAffordableTargetIsOffered) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent a1, a2;
+    engine.testHook_setAgents(&a1, &a2);
+    engine.testHook_initSubsystems();
+    initMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto mighty = addUnitIn(s, P1, /*might=*/3, /*at_bf=*/0);  // energy 3-3 = 0
+    auto weak   = addUnitIn(s, P1, /*might=*/0, /*at_bf=*/0);  // energy 3-0 = 3
+    auto gear   = addGearIn(s, P1, kHextechGauntlets, /*at_bf=*/0);
+    auto rune   = addRuneIn(s, P1, Domain::Fury);  // exactly one ready rune
+
+    auto offers = equipOffersFor(engine, gear);
+    ASSERT_EQ(offers.size(), 1u)
+        << "one ready rune pays the [A] for the Might-3 unit (energy 0) and "
+           "nothing else — the Might-0 unit needs 3 more energy, so its "
+           "(gear, unit) intent is illegal and must not be generated.";
+    ASSERT_EQ(offers[0].targets.size(), 1u);
+    EXPECT_EQ(offers[0].targets[0], mighty);
+
+    // The unaffordable target, hand-built: rejected LOUDLY, nothing paid.
+    std::vector<std::string> warnings;
+    auto conn = events.on_log.connect([&](const LogEvent& e) {
+        if (e.level == LogLevel::Warning) warnings.push_back(e.message);
+    });
+    Intent bad;
+    bad.type = IntentType::ActivateAbility;
+    bad.player = P1;
+    bad.ability_source = gear;
+    bad.targets = {weak};
+    const auto before = fingerprintOf(s, P1);
+    engine.testHook_executeIntent(bad);
+    conn.disconnect();
+
+    bool warned = false;
+    for (const auto& w : warnings)
+        if (w.find("EQUIP:") != std::string::npos &&
+            w.find("Hextech Gauntlets") != std::string::npos) warned = true;
+    EXPECT_TRUE(warned);
+    EXPECT_EQ(fingerprintOf(s, P1), before);
+    EXPECT_FALSE(s.getObject(gear).attached_to.has_value());
+
+    // …and the OFFERED one really is payable.
+    engine.testHook_executeIntent(offers[0]);
+    ASSERT_TRUE(s.getObject(gear).attached_to.has_value());
+    EXPECT_EQ(*s.getObject(gear).attached_to, mighty);
+    EXPECT_FALSE(s.getObject(rune).location.has_value())
+        << "the single rune was recycled for the [A]";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (11) Blade of the Ruined King — pay the [Y], THEN kill
+//
+// `killObject` fires death events, and CR 164.2.b's rune recycle is itself a
+// [Reaction]: something opened by the kill can spend the very Order rune
+// `canEquip` counted. With the kill first, that leaves a friendly unit dead,
+// the [Y] unpaid and the gear unattached. The irreversible action goes LAST.
+// The UnitDied handler below is the test's stand-in for that reaction.
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_F(EquipLegalityTest, BladeOfTheRuinedKing_PaysThePowerBeforeItKills) {
+    Card* c = card_registry.get(kBladeOfRuinedKing);
+    ASSERT_NE(c, nullptr);
+
+    // ── A: a reaction on the death spends the Order rune ──
+    {
+        SCOPED_TRACE("A: the death fires a rune-spending reaction");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit   = addUnit(P1, kInvalidId, /*might=*/3, /*at_bf=*/0);
+        auto victim = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear   = addGearOnBoard(P1, kBladeOfRuinedKing, /*at_bf=*/0);
+        auto order  = addRune(P1, Domain::Order);
+
+        ASSERT_TRUE(c->canEquip(state, P1));
+
+        bool rune_still_in_base_at_kill = true;
+        auto conn = events.on_unit_died.connect([&](const UnitDiedEvent&) {
+            auto& r = state.getObject(order);
+            rune_still_in_base_at_kill = r.location.has_value();
+            if (!r.location.has_value()) return;
+            r.location = std::nullopt;
+            r.zone = ZoneType::RuneDeck;
+            state.player(P1).rune_deck.push_back(order);
+        });
+
+        CardContext ctx{state, events, exec, P1, gear};
+        const bool ok = c->onEquip(ctx, unit);
+        conn.disconnect();
+
+        EXPECT_FALSE(rune_still_in_base_at_kill)
+            << "the [Y] must already be paid when the unit dies — otherwise a "
+               "reaction opened by the death can spend the rune canEquip "
+               "counted, and the kill is unrecoverable.";
+        EXPECT_TRUE(ok) << "the whole cost is payable, so the equip succeeds";
+        EXPECT_FALSE(state.getObject(victim).location.has_value())
+            << "the friendly unit is still killed as the other half of the cost";
+        ASSERT_TRUE(state.getObject(gear).attached_to.has_value());
+        EXPECT_EQ(*state.getObject(gear).attached_to, unit);
+    }
+
+    // ── B: no Order rune at all → nothing is killed ──
+    {
+        SCOPED_TRACE("B: [Y] unpayable");
+        resetBoard();
+        EffectExecutor exec(state, events, card_db, &card_registry);
+        auto unit   = addUnit(P1, kInvalidId, /*might=*/3, /*at_bf=*/0);
+        auto victim = addUnit(P1, kInvalidId, /*might=*/2, /*at_bf=*/0);
+        auto gear   = addGearOnBoard(P1, kBladeOfRuinedKing, /*at_bf=*/0);
+        addRune(P1, Domain::Fury);  // wrong domain
+
+        const auto before = fingerprint(P1);
+        CardContext ctx{state, events, exec, P1, gear};
+        EXPECT_FALSE(c->onEquip(ctx, unit));
+        EXPECT_TRUE(state.getObject(victim).location.has_value())
+            << "if the power cannot be paid, nothing is killed";
+        EXPECT_EQ(fingerprint(P1), before);
+        EXPECT_FALSE(state.getObject(gear).attached_to.has_value());
+    }
 }
 
 }  // namespace

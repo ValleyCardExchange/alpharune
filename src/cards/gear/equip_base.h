@@ -12,67 +12,127 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace riftbound {
 
-// ─── Shared equip-cost predicate ────────────────────────────────────────────
-// ONE scan of the controller's base, shared by `standardEquip` (which needs
-// the rune ids to spend) and by `SimpleEquipGear::canEquip` (which needs only
-// the yes/no). Keeping both on this scan is what makes `canEquip` and
-// `onEquip` incapable of disagreeing.
+// ─── The power rune: chosen FIRST, exhausted preferred ──────────────────────
 //
 // Recycling a rune for power carries NO readiness condition (CR 164.2.b —
-// "Recycle this: [Reaction] — Add [C]"), which is why `domain_rune` ignores
-// `is_exhausted`; a rune exhausted to pay the energy may then be recycled for
-// the power.
-struct StandardEquipScan {
-    int ready_runes = 0;                 // in base, any domain
-    GameObjectId domain_rune = kInvalidId;  // matching domain, exhausted or ready
-    bool payable(int energy_cost) const {
-        return ready_runes >= energy_cost && domain_rune != kInvalidId;
-    }
-};
-
-inline StandardEquipScan scanStandardEquip(const GameState& state, PlayerId player,
-                                           Domain domain) {
-    StandardEquipScan scan;
+// "Recycle this: [Reaction] — Add [C]"), so an EXHAUSTED rune pays power just
+// as well as a ready one. Preferring the exhausted one keeps ready runes free
+// for the energy half, exactly like the engine's canonical additional-cost
+// payer (GameEngine::payAdditionalCost sorts its matching runes exhausted
+// first). `domain == nullopt` means any rune — the [A] power symbol.
+//
+// Lives here rather than in card_helpers.h (which includes this header and
+// builds canPayOnePower / payOnePower on top of it) so the equip scan and the
+// one-power payer pick their rune by the same rule.
+inline GameObjectId findPowerRune(const GameState& state, PlayerId player,
+                                  std::optional<Domain> domain) {
     auto base_loc = BaseLocation{player};
+    GameObjectId exhausted = kInvalidId, ready = kInvalidId;
     for (const auto& [id, obj] : state.objects) {
         if (!obj.isRune() || obj.controller != player) continue;
         if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-        if (!obj.is_exhausted) scan.ready_runes++;
-        if (scan.domain_rune == kInvalidId) {
-            for (auto d : obj.domains) {
-                if (d == domain) { scan.domain_rune = id; break; }
-            }
+        if (domain.has_value()) {
+            bool match = false;
+            for (auto d : obj.domains) if (d == *domain) { match = true; break; }
+            if (!match) continue;
+        }
+        if (obj.is_exhausted) {
+            if (exhausted == kInvalidId) exhausted = id;
+        } else if (ready == kInvalidId) {
+            ready = id;
         }
     }
+    return exhausted != kInvalidId ? exhausted : ready;
+}
+
+// ─── Shared equip-cost scan ─────────────────────────────────────────────────
+// ONE scan of the controller's base, shared by every equip predicate and by
+// the payer that spends the runes it names. Keeping both on this scan is what
+// makes `canEquip` and `onEquip` incapable of disagreeing.
+//
+// The power rune is chosen FIRST and then EXCLUDED from the energy count, so
+// one physical rune can never pay both halves of one cost. That is the rule
+// the engine's own canonical additional-cost payer already enforces
+// (GameEngine::canPayAdditionalCost keeps its recycled runes out of
+// `energy_available`; payAdditionalCost skips them when exhausting) — an
+// equip payer that disagreed with it said "payable" for a Boneshiver
+// ([1][D]) held up by a single ready Body rune and then paid the whole cost
+// off that one rune.
+struct StandardEquipScan {
+    GameObjectId power_rune = kInvalidId;  // recycled for the [D] / [A] half
+    int energy_runes = 0;    // ready runes in base OTHER than `power_rune`
+    bool payable(int energy_cost) const {
+        return power_rune != kInvalidId && energy_runes >= energy_cost;
+    }
+};
+
+/// `domain == nullopt` scans for the [A] (any-rune) power half.
+inline StandardEquipScan scanEquipCost(const GameState& state, PlayerId player,
+                                       std::optional<Domain> domain) {
+    StandardEquipScan scan;
+    scan.power_rune = findPowerRune(state, player, domain);
+    if (scan.power_rune == kInvalidId) return scan;
+    auto base_loc = BaseLocation{player};
+    for (const auto& [id, obj] : state.objects) {
+        if (id == scan.power_rune) continue;  // reserved for the power half
+        if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
+        if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
+        scan.energy_runes++;
+    }
     return scan;
+}
+
+inline StandardEquipScan scanStandardEquip(const GameState& state, PlayerId player,
+                                           Domain domain) {
+    return scanEquipCost(state, player, domain);
 }
 
 /// `Card::canEquip` for any gear whose equip cost is [energy] + one [domain]
 /// power — the predicate half of `standardEquip`.
 inline bool canStandardEquip(const GameState& state, PlayerId player,
                              int energy_cost, Domain domain) {
-    return scanStandardEquip(state, player, domain).payable(energy_cost);
+    return scanEquipCost(state, player, domain).payable(energy_cost);
 }
 
-/// `Card::canEquip` for [A] gear: the energy must be coverable by ready runes
-/// AND one rune must remain in base to recycle for the [A] power — an
-/// exhausted one counts, including one just exhausted for the energy. That is
-/// exactly `total runes in base >= max(1, energy_cost)`.
+/// `Card::canEquip` for [A] gear: one rune is recycled for the [A] and the
+/// energy comes off the OTHER ready runes.
 inline bool canUniversalEquip(const GameState& state, PlayerId player,
                               int energy_cost) {
-    int ready = 0, total = 0;
+    return scanEquipCost(state, player, std::nullopt).payable(energy_cost);
+}
+
+/// Spend exactly what `scan` authorised: exhaust `energy_cost` ready runes,
+/// skipping the reserved power rune, then recycle that rune. Callers MUST
+/// check `scan.payable(energy_cost)` first — the same scan object, so the
+/// check and the payment can never name different runes.
+inline void payEquipCost(CardContext& ctx, const StandardEquipScan& scan,
+                         int energy_cost, const std::string& power_label) {
+    auto& state = ctx.state;
+    auto player = ctx.controller;
+    auto& ps = state.player(player);
     auto base_loc = BaseLocation{player};
-    for (const auto& [id, obj] : state.objects) {
-        if (!obj.isRune() || obj.controller != player) continue;
+
+    int e_remaining = energy_cost;
+    for (auto& [id, obj] : state.objects) {
+        if (e_remaining <= 0) break;
+        if (id == scan.power_rune) continue;  // reserved for the power half
+        if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
         if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-        total++;
-        if (!obj.is_exhausted) ready++;
+        obj.is_exhausted = true;
+        e_remaining--;
     }
-    return ready >= energy_cost && total >= std::max(1, energy_cost);
+
+    auto& pr = state.getObject(scan.power_rune);
+    ctx.events.logTrace("  EQUIP_COST: recycled " + pr.name + " for " + power_label);
+    pr.location = std::nullopt;
+    pr.zone = ZoneType::RuneDeck;
+    ps.rune_deck.insert(ps.rune_deck.begin(), scan.power_rune);
 }
 
 // ─── Canonical standard equip: pay [energy] + one [domain] power, then attach ──
@@ -80,36 +140,15 @@ inline bool standardEquip(CardContext& ctx, GameObjectId gear_id, GameObjectId u
                           int energy_cost, Domain domain) {
     auto& state = ctx.state;
     auto player = ctx.controller;
-    auto& ps = state.player(player);
 
     // PRE-CHECK: bail (no state change) unless BOTH the energy and the
     // domain-power can be paid — otherwise the loops below would partially
-    // pay and then "equip for free". Same scan `canStandardEquip` answers on.
-    auto scan = scanStandardEquip(state, player, domain);
+    // pay and then "equip for free". Same scan `canStandardEquip` answers on,
+    // and the same scan `payEquipCost` spends.
+    auto scan = scanEquipCost(state, player, domain);
     if (!scan.payable(energy_cost)) return false;
-    const GameObjectId domain_rune = scan.domain_rune;
-    auto base_loc = BaseLocation{player};
 
-    // Pay energy: exhaust ready runes.
-    if (energy_cost > 0) {
-        int e_remaining = energy_cost;
-        for (auto& [id, obj] : state.objects) {
-            if (e_remaining <= 0) break;
-            if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
-            if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-            obj.is_exhausted = true;
-            e_remaining--;
-        }
-    }
-
-    // Recycle the pre-located matching-domain rune for power.
-    {
-        auto& dr = state.getObject(domain_rune);
-        ctx.events.logTrace("  EQUIP_COST: recycled " + dr.name + " for power");
-        dr.location = std::nullopt;
-        dr.zone = ZoneType::RuneDeck;
-        ps.rune_deck.insert(ps.rune_deck.begin(), domain_rune);
-    }
+    payEquipCost(ctx, scan, energy_cost, "power");
 
     // Attach.
     auto& gear = state.getObject(gear_id);
@@ -160,29 +199,11 @@ public:
         return canUniversalEquip(state, controller, energy_cost_);
     }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
-        if (!canEquip(ctx.state, ctx.controller)) return false;
         auto& state = ctx.state;
-        auto player = ctx.controller;
-        auto& ps = state.player(player);
-        auto base_loc = BaseLocation{player};
+        auto scan = scanEquipCost(state, ctx.controller, std::nullopt);
+        if (!scan.payable(energy_cost_)) return false;
+        payEquipCost(ctx, scan, energy_cost_, "[A]");
 
-        for (int i = 0; i < energy_cost_; ++i) {
-            for (auto& [id, obj] : state.objects) {
-                if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
-                if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-                obj.is_exhausted = true;
-                break;
-            }
-        }
-        for (auto& [id, obj] : state.objects) {
-            if (!obj.isRune() || obj.controller != player) continue;
-            if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-            ctx.events.logTrace("  EQUIP_COST: recycled " + obj.name + " for [A]");
-            obj.location = std::nullopt;
-            obj.zone = ZoneType::RuneDeck;
-            ps.rune_deck.insert(ps.rune_deck.begin(), id);
-            break;
-        }
         auto& gear = state.getObject(ctx.source);
         auto& unit_obj = state.getObject(unit);
         ctx.events.logTrace("EQUIP: " + gear.name + " -> " + unit_obj.name);

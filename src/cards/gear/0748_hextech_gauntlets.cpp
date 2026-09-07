@@ -2,8 +2,10 @@
 #include "cards/card_registry.h"
 #include "core/game_state.h"
 #include "core/events.h"
+#include "cards/gear/equip_base.h"
 #include "engine/effect_executor.h"
 #include <algorithm>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,75 +20,42 @@ public:
     bool hasEquipAbility() const override { return true; }
 
     // "[Equip] [3][A], reduced by the chosen unit's Might" — the energy is
-    // TARGET-dependent, so the target-agnostic predicate asks whether SOME
-    // friendly unit on board is affordable (the Mightiest one is the cheapest)
-    // and whether a rune remains to recycle for the [A].
+    // TARGET-dependent, so legality is answered PER TARGET and the
+    // target-agnostic predicate is "does SOME friendly unit satisfy it".
+    static int energyFor(int target_might) {
+        return std::max(0, 3 - target_might);
+    }
+
+    bool canEquipTarget(const GameState& state, PlayerId controller,
+                        GameObjectId unit) const override {
+        if (!state.objectExists(unit)) return false;
+        const auto& u = state.getObject(unit);
+        if (!u.isUnit() || u.controller != controller) return false;
+        if (!u.location.has_value()) return false;
+        // One rune is recycled for the [A]; the energy comes off the OTHER
+        // ready runes (scanEquipCost keeps the two halves off one rune).
+        return scanEquipCost(state, controller, std::nullopt)
+                   .payable(energyFor(u.current_might));
+    }
+
     bool canEquip(const GameState& state, PlayerId controller) const override {
-        int ready = 0, total = 0;
-        auto base_loc = BaseLocation{controller};
-        for (const auto& [id, obj] : state.objects) {
-            if (!obj.isRune() || obj.controller != controller) continue;
-            if (!obj.location.has_value() ||
-                *obj.location != LocationId{base_loc}) continue;
-            total++;
-            if (!obj.is_exhausted) ready++;
-        }
-        if (total == 0) return false;  // nothing to recycle for the [A]
-        int best_might = -1;
         for (const auto& [id, obj] : state.objects) {
             if (!obj.isUnit() || obj.controller != controller) continue;
             if (!obj.location.has_value()) continue;
-            best_might = std::max(best_might, obj.current_might);
+            if (canEquipTarget(state, controller, id)) return true;
         }
-        if (best_might < 0) return false;  // no unit to equip
-        int cheapest = std::max(0, 3 - best_might);
-        return ready >= cheapest;
+        return false;
     }
 
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
-        if (!canEquip(ctx.state, ctx.controller)) return false;
-        if (!ctx.state.objectExists(unit)) return false;
         auto& state = ctx.state;
-        auto player = ctx.controller;
-        auto& ps = state.player(player);
-        auto base_loc = BaseLocation{player};
+        if (!canEquipTarget(state, ctx.controller, unit)) return false;
 
-        // Energy cost = [3] reduced by chosen unit's Might (min 0).
-        int reduction = state.getObject(unit).current_might;
-        int energy_cost = 3 - reduction;
-        if (energy_cost < 0) energy_cost = 0;
-
-        // TARGET-SPECIFIC affordability (canEquip above answered the
-        // target-agnostic half): this particular unit's Might may not reduce
-        // the energy far enough. Bail with no state change if so.
-        int ready_count = 0;
-        GameObjectId any_rune = kInvalidId;
-        for (auto& [id, obj] : state.objects) {
-            if (!obj.isRune() || obj.controller != player) continue;
-            if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-            if (!obj.is_exhausted) ready_count++;
-            if (any_rune == kInvalidId) any_rune = id;
-        }
-        if (ready_count < energy_cost) return false;
-        if (any_rune == kInvalidId) return false;
-
-        // Pay energy: exhaust `energy_cost` ready runes.
-        int e_remaining = energy_cost;
-        for (auto& [id, obj] : state.objects) {
-            if (e_remaining <= 0) break;
-            if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
-            if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-            obj.is_exhausted = true;
-            e_remaining--;
-        }
-        // Recycle any rune for [A] power.
-        {
-            auto& r = state.getObject(any_rune);
-            ctx.events.logTrace("  EQUIP_COST: recycled " + r.name + " for [A]");
-            r.location = std::nullopt;
-            r.zone = ZoneType::RuneDeck;
-            ps.rune_deck.insert(ps.rune_deck.begin(), any_rune);
-        }
+        const int reduction = state.getObject(unit).current_might;
+        const int energy_cost = energyFor(reduction);
+        auto scan = scanEquipCost(state, ctx.controller, std::nullopt);
+        if (!scan.payable(energy_cost)) return false;  // canEquipTarget agrees
+        payEquipCost(ctx, scan, energy_cost, "[A]");
 
         // Attach.
         auto& gear = state.getObject(ctx.source);

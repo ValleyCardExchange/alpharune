@@ -45,7 +45,7 @@ public:
             killable.push_back(id);
         }
 
-        // Commit cost 1: kill a friendly unit (agent choice).
+        // Choose the victim (agent choice) — no state change yet.
         GameObjectId victim = pickTarget(ctx, "Blade of the Ruined King: "
                                               "kill a friendly unit", killable);
         if (victim == kInvalidId) {
@@ -53,11 +53,19 @@ public:
             return false;
         }
         if (!state.objectExists(victim)) return false;
-        ctx.executor.killObject(victim);
+        if (!state.objectExists(unit)) return false;
 
-        // Commit cost 2: recycle the Order power rune for [Y] (CR 164.2.b —
+        // Commit cost 1: recycle the Order power rune for [Y] (CR 164.2.b —
         // an exhausted rune pays power, and is preferred over a ready one).
+        // PAID FIRST, and the kill goes last: killObject fires death events,
+        // and CR 164.2.b's recycle is itself a [Reaction], so anything opened
+        // by the death can spend the very Order rune canEquip counted. With
+        // the kill first that left a friendly unit dead, the [Y] unpaid and
+        // the gear unattached — an irreversible action on an unpaid cost.
         if (!payOnePower(ctx, player, Domain::Order)) return false;
+
+        // Commit cost 2: kill the friendly unit.
+        ctx.executor.killObject(victim);
 
         // Attach.
         if (!state.objectExists(unit)) return false;

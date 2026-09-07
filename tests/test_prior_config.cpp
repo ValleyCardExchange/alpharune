@@ -290,6 +290,34 @@ TEST(LoadPriorConfig, FullSchemaAllKeysParsesAndOverridesEverything) {
     EXPECT_DOUBLE_EQ(p.evaluator.empowered_legend, 0.11);
 }
 
+// A non-numeric value where a number belongs: nlohmann throws
+// json::type_error, which is NOT a std::runtime_error, so the header's
+// documented contract was broken and the message named nothing the user
+// wrote. Both sections are covered — they read their fields through the same
+// guard.
+
+TEST(LoadPriorConfig, NonNumericFamilyValueThrowsRuntimeErrorNamingTheKey) {
+    TempJsonFile f(R"({"action_family_weights": {"play": "high"}})");
+    try {
+        loadPriorConfig(f.path());
+        FAIL() << "expected loadPriorConfig to throw";
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("play"), std::string::npos) << msg;
+    }
+}
+
+TEST(LoadPriorConfig, NonNumericEvaluatorValueThrowsRuntimeErrorNamingTheKey) {
+    TempJsonFile f(R"({"evaluator_weights": {"battlefield": true}})");
+    try {
+        loadPriorConfig(f.path());
+        FAIL() << "expected loadPriorConfig to throw";
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("battlefield"), std::string::npos) << msg;
+    }
+}
+
 TEST(LoadPriorConfig, TheCommittedExampleFileParsesToDefaults) {
     auto p = loadPriorConfig(samplePriorPath());
     EXPECT_DOUBLE_EQ(p.family.play, 4.0);

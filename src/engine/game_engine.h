@@ -197,7 +197,7 @@ public:
         int& action_count) {
         return resolveShowdownDecision(bf, chosen, current_focus, action_count);
     }
-    void testHook_executeIntent(const Intent& i) { executeIntent(i); }
+    bool testHook_executeIntent(const Intent& i) { return executeIntent(i); }
     // Install agents directly without going through run(). Required so
     // tests can exercise paths that invoke chain priority loops
     // (runChain → processFEPR → getAgent).
@@ -498,7 +498,15 @@ private:
     CostPaymentAdvance resolveCostPaymentDecision(const Intent& chosen);
 
     // ── Actions ──
-    void executeIntent(const Intent& intent);
+    /// Dispatch one intent. Returns whether it actually EXECUTED: false when
+    /// the intent was rejected before anything changed (an activation whose
+    /// [Disempower] or energy cost cannot be paid, a token source with no
+    /// CardDef, an equip whose onEquip refused, an intent type this switch
+    /// does not handle). ChainManager::setActivateAbility's contract is
+    /// exactly this bool — the closed-state loop must not restart FEPR, or
+    /// clear the accumulated priority passes, for something that never
+    /// happened, and it cannot see inside this executor to find out.
+    bool executeIntent(const Intent& intent);
     void executePlayCard(const Intent& intent);
     void executePlaySpell(const Intent& intent);
     void executeStandardMove(const Intent& intent);

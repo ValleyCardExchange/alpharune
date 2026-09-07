@@ -67,45 +67,17 @@ void GameEngine::initSubsystems() {
     // activation path the main phase and showdowns use (see
     // ChainManager::setActivateAbility for the burst this replaces).
     //
-    // The bool this returns is the contract's "did the activation actually
-    // execute". executeIntent is void and can legitimately reject an
-    // activation (a token source with no CardDef; a [Disempower] cost on a
-    // source that is not Empowered, CR 828) — a rejection that pays nothing
-    // and must NOT restart FEPR. Success normally shows up as a chain item
-    // (every activated ability in the engine today goes through addAbility),
-    // but an ability that resolved immediately without one (CR 429.2 — the
-    // shape of every "[Add]" ability) is just as real, so the resources it
-    // produced and the costs it paid are compared as well. A rejection
-    // changes none of them.
-    chain_manager_->setActivateAbility([this](const Intent& intent) -> bool {
-        auto resourceFingerprint = [](const PlayerState& p) {
-            std::vector<int> f{p.rune_pool.energy, p.rune_pool.universal_power,
-                                p.xp, static_cast<int>(p.hand.size()),
-                                static_cast<int>(p.main_deck.size())};
-            for (int d = 0; d < static_cast<int>(Domain::Count); ++d)
-                f.push_back(p.rune_pool.power[d]);
-            return f;
-        };
-        const bool had_source = state_.objectExists(intent.ability_source);
-        const bool was_exhausted =
-            had_source && state_.getObject(intent.ability_source).is_exhausted;
-        const bool was_empowered =
-            had_source && state_.getObject(intent.ability_source).is_empowered;
-        const size_t chain_before = state_.chain.items.size();
-        const auto res_before = resourceFingerprint(state_.player(intent.player));
-
-        executeIntent(intent);
-
-        if (state_.chain.items.size() != chain_before) return true;
-        if (resourceFingerprint(state_.player(intent.player)) != res_before)
-            return true;
-        if (had_source && !state_.objectExists(intent.ability_source))
-            return true;  // e.g. Gold (326): "Kill this" is part of the cost
-        if (!had_source) return false;
-        const auto& src = state_.getObject(intent.ability_source);
-        return src.is_exhausted != was_exhausted ||
-               src.is_empowered != was_empowered;
-    });
+    // The bool is executeIntent's OWN answer to "did the activation actually
+    // execute". It can legitimately reject one (a token source with no
+    // CardDef; a [Disempower] cost on a source that is not Empowered, CR 828;
+    // an energy cost it cannot pay) — a rejection that pays nothing and must
+    // NOT restart FEPR or clear the accumulated priority passes. This used to
+    // be inferred from a resource fingerprint of the activating player, which
+    // could see neither an energy cost paid off rune OBJECTS nor an effect
+    // that only touched the opponent or the board; the executor knows what it
+    // did, so it says so.
+    chain_manager_->setActivateAbility(
+        [this](const Intent& intent) { return executeIntent(intent); });
     effect_executor_ = std::make_unique<EffectExecutor>(state_, events_, card_db_, &card_registry_);
     effect_executor_->setRng(&rng_);
     effect_executor_->setAgentQuery(
@@ -1194,8 +1166,12 @@ void GameEngine::doExpirationBody() {
 // Action execution
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void GameEngine::executeIntent(const Intent& intent) {
+bool GameEngine::executeIntent(const Intent& intent) {
     events_.logTrace(std::string("INTENT: ") + toString(intent.type) + " by " + toString(intent.player));
+
+    // "Did this intent actually execute?" — see the declaration. Set false at
+    // every reject point below; those all leave the game state untouched.
+    bool executed = true;
 
     switch (intent.type) {
         case IntentType::PlayCard:
@@ -1271,7 +1247,7 @@ void GameEngine::executeIntent(const Intent& intent) {
             // Skip card-def lookup for tokens (no CardDef). The rest of this
             // handler reads from `source` directly; the previous `def` binding
             // was dead and threw std::out_of_range when source was a token.
-            if (source.card_def_id == kInvalidId) break;
+            if (source.card_def_id == kInvalidId) { executed = false; break; }
 
             // Equip: card handles its own cost payment and attachment.
             // Phase 6r — gears with needsEquipTimeTarget=true get an
@@ -1295,7 +1271,8 @@ void GameEngine::executeIntent(const Intent& intent) {
                             // reached the executor). Never silent again.
                             events_.logWarn("EQUIP: " + source.name +
                                             " rejected — offered but unpayable "
-                                            "(canEquip/onEquip disagree)");
+                                            "(canEquipTarget/onEquip disagree)");
+                            executed = false;
                         }
                         break;
                     }
@@ -1338,6 +1315,28 @@ void GameEngine::executeIntent(const Intent& intent) {
                 events_.logWarn("ACTIVATE_COST: illegal activation of " +
                                 source.name + " — the [Disempower] cost "
                                 "requires an Empowered source");
+                executed = false;
+                break;
+            }
+            // CR 163.2.a — same rule for the ENERGY component, and for the
+            // same reason: the payment loop below exhausts ready runes one at
+            // a time and used to fall through to addAbility with the cost only
+            // PARTLY paid. A hand-built intent (agent, OpenSpiel bridge,
+            // replay) for a 3-energy ability held up by 1 ready rune paid 1
+            // and executed in full. Checked here, BEFORE the source is
+            // exhausted / disempowered and before any chain item exists, so a
+            // rejection costs nothing. `availableEnergy` is the same
+            // accounting the generators gate their offers on, so this can only
+            // reject what they would never have offered.
+            if (act_cost.energy > 0 &&
+                availableEnergy(intent.player) < act_cost.energy) {
+                events_.logWarn("ACTIVATE_COST: illegal activation of " +
+                                source.name + " — its [" +
+                                std::to_string(act_cost.energy) +
+                                "] energy cost cannot be paid (" +
+                                std::to_string(availableEnergy(intent.player)) +
+                                " available)");
+                executed = false;
                 break;
             }
             if (act_cost.exhaust) {
@@ -1349,9 +1348,15 @@ void GameEngine::executeIntent(const Intent& intent) {
                 events_.logTrace("ACTIVATE_COST: disempower " + source.name);
                 effect_executor_->disempowerObject(intent.ability_source);
             }
-            // Pay energy cost
+            // Pay energy cost — floating pool first, then ready runes, the
+            // order payCardCost and payAdditionalCost already use. The
+            // pre-check above counted both, so `needed` always reaches 0.
             if (act_cost.energy > 0) {
+                auto& act_ps = state_.player(intent.player);
                 int needed = act_cost.energy;
+                int from_pool = std::min(act_ps.rune_pool.energy, needed);
+                act_ps.rune_pool.energy -= from_pool;
+                needed -= from_pool;
                 auto base_loc = BaseLocation{intent.player};
                 for (auto& [id, obj] : state_.objects) {
                     if (needed <= 0) break;
@@ -1423,8 +1428,12 @@ void GameEngine::executeIntent(const Intent& intent) {
             events_.emit(GameOverEvent{state_.winner, state_.game_over_reason});
             break;
         default:
+            // Nothing dispatched — pre-existing silent behaviour, reported
+            // honestly now that callers can read the status.
+            executed = false;
             break;
     }
+    return executed;
 }
 
 void GameEngine::executePlayCard(const Intent& intent) {
@@ -2871,6 +2880,16 @@ std::vector<Intent> GameEngine::generateMainPhaseActions(PlayerId player) const 
         for (auto& [uid, unit] : state_.objects) {
             if (!unit.isUnit() || unit.controller != player) continue;
             if (!unit.location.has_value()) continue;
+            // PER-TARGET affordability (spec addendum #17). canEquip above
+            // answers "some legal target exists"; where the cost depends on
+            // the target (Hextech Gauntlets' energy is [3] reduced by the
+            // chosen unit's Might) that is true via the cheapest unit while
+            // this particular (gear, unit) intent is unpayable. Offering it
+            // reproduced the burst the canEquip gate was added to kill, just
+            // audibly: the executor rejected it and it stayed legal to pick
+            // again. Default forwards to canEquip, so gear with a
+            // target-independent cost is gated exactly as before.
+            if (!gear_card->canEquipTarget(state_, player, uid)) continue;
 
             Intent equip;
             equip.type = IntentType::ActivateAbility;

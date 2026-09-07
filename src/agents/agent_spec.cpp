@@ -81,6 +81,25 @@ const std::set<std::string>& evaluatorKeys() {
     return keys;
 }
 
+// nlohmann's `.get<double>()` throws json::type_error for a non-numeric
+// value, and type_error derives from json::exception, NOT from
+// std::runtime_error — so `{"action_family_weights": {"play": "high"}}` threw
+// a type the header's `@throws std::runtime_error` contract does not promise,
+// with a message that names nothing the user wrote. Rethrow as the documented
+// type, naming the offending key the way rejectUnknownKeys does.
+double numberOrThrow(const nlohmann::json& obj, const std::string& key,
+                     const std::string& path, const std::string& section) {
+    const auto& v = obj.at(key);
+    if (!v.is_number()) {
+        std::ostringstream msg;
+        msg << "prior file '" << path << "': '";
+        if (!section.empty()) msg << section << ".";
+        msg << key << "' must be a number.";
+        throw std::runtime_error(msg.str());
+    }
+    return v.get<double>();
+}
+
 void rejectUnknownKeys(const nlohmann::json& obj, const std::set<std::string>& allowed,
                        const std::string& path, const std::string& section) {
     for (auto it = obj.begin(); it != obj.end(); ++it) {
@@ -126,18 +145,18 @@ PriorConfig loadPriorConfig(const std::string& path) {
                 "prior file '" + path + "': 'action_family_weights' must be an object.");
         }
         rejectUnknownKeys(fw, familyKeys(), path, "action_family_weights");
-        if (fw.contains("play")) out.family.play = fw.at("play").get<double>();
+        if (fw.contains("play")) out.family.play = numberOrThrow(fw, "play", path, "action_family_weights");
         if (fw.contains("combat_damage"))
-            out.family.combat_damage = fw.at("combat_damage").get<double>();
+            out.family.combat_damage = numberOrThrow(fw, "combat_damage", path, "action_family_weights");
         if (fw.contains("move_to_battlefield"))
-            out.family.move_to_battlefield = fw.at("move_to_battlefield").get<double>();
+            out.family.move_to_battlefield = numberOrThrow(fw, "move_to_battlefield", path, "action_family_weights");
         if (fw.contains("move_to_base"))
-            out.family.move_to_base = fw.at("move_to_base").get<double>();
-        if (fw.contains("activate")) out.family.activate = fw.at("activate").get<double>();
-        if (fw.contains("choice")) out.family.choice = fw.at("choice").get<double>();
-        if (fw.contains("setup")) out.family.setup = fw.at("setup").get<double>();
-        if (fw.contains("pass")) out.family.pass = fw.at("pass").get<double>();
-        if (fw.contains("concede")) out.family.concede = fw.at("concede").get<double>();
+            out.family.move_to_base = numberOrThrow(fw, "move_to_base", path, "action_family_weights");
+        if (fw.contains("activate")) out.family.activate = numberOrThrow(fw, "activate", path, "action_family_weights");
+        if (fw.contains("choice")) out.family.choice = numberOrThrow(fw, "choice", path, "action_family_weights");
+        if (fw.contains("setup")) out.family.setup = numberOrThrow(fw, "setup", path, "action_family_weights");
+        if (fw.contains("pass")) out.family.pass = numberOrThrow(fw, "pass", path, "action_family_weights");
+        if (fw.contains("concede")) out.family.concede = numberOrThrow(fw, "concede", path, "action_family_weights");
     }
 
     if (j.contains("evaluator_weights")) {
@@ -147,16 +166,16 @@ PriorConfig loadPriorConfig(const std::string& path) {
                 "prior file '" + path + "': 'evaluator_weights' must be an object.");
         }
         rejectUnknownKeys(ew, evaluatorKeys(), path, "evaluator_weights");
-        if (ew.contains("score")) out.evaluator.score = ew.at("score").get<double>();
+        if (ew.contains("score")) out.evaluator.score = numberOrThrow(ew, "score", path, "evaluator_weights");
         if (ew.contains("battlefield"))
-            out.evaluator.battlefield = ew.at("battlefield").get<double>();
-        if (ew.contains("unit")) out.evaluator.unit = ew.at("unit").get<double>();
+            out.evaluator.battlefield = numberOrThrow(ew, "battlefield", path, "evaluator_weights");
+        if (ew.contains("unit")) out.evaluator.unit = numberOrThrow(ew, "unit", path, "evaluator_weights");
         if (ew.contains("held_interaction"))
-            out.evaluator.held_interaction = ew.at("held_interaction").get<double>();
+            out.evaluator.held_interaction = numberOrThrow(ew, "held_interaction", path, "evaluator_weights");
         if (ew.contains("trash_resource"))
-            out.evaluator.trash_resource = ew.at("trash_resource").get<double>();
+            out.evaluator.trash_resource = numberOrThrow(ew, "trash_resource", path, "evaluator_weights");
         if (ew.contains("empowered_legend"))
-            out.evaluator.empowered_legend = ew.at("empowered_legend").get<double>();
+            out.evaluator.empowered_legend = numberOrThrow(ew, "empowered_legend", path, "evaluator_weights");
     }
 
     return out;

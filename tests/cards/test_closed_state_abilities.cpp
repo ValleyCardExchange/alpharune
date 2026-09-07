@@ -69,6 +69,7 @@ namespace {
 // use.
 constexpr CardDefId kOpener      = 920;  // [Action], free — opens the chain
 constexpr CardDefId kChainingGgr = 921;  // gear, [E]: [Reaction] — draw 1
+constexpr CardDefId kCostlyGear  = 922;  // gear, [3][E]: [Reaction] — draw 1
 
 // The real card this whole fix exists for: 3 copies ride in
 // decks/kennen_tyler.txt.
@@ -119,6 +120,62 @@ private:
         d.ability_text = "[E]: [Reaction] - Draw 1.";
         return d;
     }();
+};
+
+/// The same shape as ChainingReactionGear with a NON-ZERO energy cost. No
+/// shipped [Reaction] ability costs energy, so the "energy cost cannot be
+/// paid" path is only reachable through a card like this one.
+class CostlyReactionGear : public GearCard {
+public:
+    const CardDef& def() const override { return def_; }
+    TriggerType triggerType() const override { return TriggerType::Activated; }
+    bool hasActivatedAbility() const override { return true; }
+    bool isReactionAbility() const override { return true; }
+    ActivationCost getActivationCost() const override {
+        return {.exhaust = true, .energy = 3};
+    }
+    void onActivate(CardContext& ctx,
+                    const std::vector<GameObjectId>& /*targets*/) override {
+        ctx.executor.drawCards(ctx.controller, 1);
+    }
+private:
+    const CardDef def_ = [] {
+        CardDef d;
+        d.id = kCostlyGear;
+        d.name = "Costly Reaction Test Gear";
+        d.card_type = CardType::Gear;
+        d.domains = {Domain::Mind};
+        d.energy_cost = 1;
+        d.keywords.set(Keyword::Reaction);
+        d.ability_text = "[3], [E]: [Reaction] - Draw 1.";
+        return d;
+    }();
+};
+
+/// Plays a scripted intent on its first call (whatever the offer set says —
+/// the point is a HAND-BUILT intent reaching the executor), passes priority
+/// afterwards, and records for every call whether P1 was in the
+/// priority-pass set at the time. That set is what a false "it executed"
+/// destroys: stepExecuteAndPass clears it on entry, so a spurious FEPR
+/// restart wipes the passes already accumulated.
+class PassSetWatchingAgent : public AgentInterface {
+public:
+    std::vector<Intent> script;
+    size_t cursor = 0;
+    int call_count = 0;
+    std::vector<bool> p1_had_passed;
+
+    Intent selectAction(const GameState& s,
+                        const std::vector<Intent>& legal) override {
+        ++call_count;
+        const auto& passed = s.turn.players_passed_priority;
+        p1_had_passed.push_back(
+            passed.find(PlayerId::Player1) != passed.end());
+        if (cursor < script.size()) return script[cursor++];
+        for (const auto& i : legal)
+            if (i.type == IntentType::PassPriority) return i;
+        return legal.empty() ? Intent{} : legal.front();
+    }
 };
 
 /// Agent for the closed-state activation tests.
@@ -176,6 +233,8 @@ protected:
         card_registry.registerCard(kOpener, std::make_unique<OpenerSpell>());
         card_registry.registerCard(kChainingGgr,
                                     std::make_unique<ChainingReactionGear>());
+        card_registry.registerCard(kCostlyGear,
+                                    std::make_unique<CostlyReactionGear>());
         // executePlaySpell reads card_db_ (printed energy_cost, [Repeat]
         // ability_text) and CardDB::get throws on an unknown id.
         card_db.buildFromClasses(card_registry);
@@ -263,6 +322,29 @@ protected:
 
     static int chaosPower(const GameState& s, PlayerId p) {
         return s.player(p).rune_pool.power[static_cast<int>(Domain::Chaos)];
+    }
+
+    GameObjectId addRuneIn(GameState& s, PlayerId owner, Domain domain) {
+        auto id = s.createObject();
+        auto& r = s.getObject(id);
+        r.owner = owner; r.controller = owner;
+        r.card_type = CardType::Rune;
+        r.name = std::string(toString(domain)) + " Rune";
+        r.domains = {domain};
+        r.zone = ZoneType::Base;
+        r.location = BaseLocation{owner};
+        return id;
+    }
+
+    static int readyRunesIn(const GameState& s, PlayerId p) {
+        int n = 0;
+        auto base = BaseLocation{p};
+        for (const auto& [id, obj] : s.objects) {
+            if (!obj.isRune() || obj.controller != p || obj.is_exhausted) continue;
+            if (!obj.location.has_value() || *obj.location != LocationId{base}) continue;
+            ++n;
+        }
+        return n;
     }
 };
 
@@ -472,4 +554,113 @@ TEST_F(ClosedStateAbilitiesTest, ShowdownReactionActivationExecutes) {
         << "The [E] cost must be paid on the showdown path too.";
     EXPECT_EQ(chaosPower(s, P1), power_before + 1)
         << "Seal of Discord's onActivate must run.";
+}
+
+// ─── (6) An UNDERPAID activation is rejected, and the pass set survives ────
+//
+// `generateClosedStateActions` gates affordability, so this only arrives as a
+// hand-built intent (agent, OpenSpiel bridge, replay) — which is exactly what
+// the ChainManager now hands to the engine. Before the fix executeIntent paid
+// what it could off the ready runes and executed in full, and the closed-state
+// callback inferred success from a resource fingerprint, so the FEPR loop
+// restarted: `players_passed_priority` was cleared and P1's pass discarded for
+// an activation whose cost was never paid.
+
+TEST_F(ClosedStateAbilitiesTest, UnderpaidActivationIsRejectedAndKeepsThePassSet) {
+    GameEngine engine(card_db, events, card_registry);
+    PassSetWatchingAgent agent1;  // P1: opens the chain, then passes
+    PassSetWatchingAgent agent2;  // P2: tries the unpayable activation
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToHandIn(s, P1, kOpener);
+    auto gear   = addGearInBase(s, P2, kCostlyGear);
+    addRuneIn(s, P2, Domain::Mind);  // ONE ready rune against a [3] cost
+    addToDeckIn(s, P2, kOpener);     // a card the draw could take
+
+    Intent underpaid;
+    underpaid.type = IntentType::ActivateReactionAbility;
+    underpaid.player = P2;
+    underpaid.ability_source = gear;
+    underpaid.ability_index = 0;
+    agent2.script = {underpaid};
+
+    std::vector<std::string> warnings;
+    auto conn = events.on_log.connect([&](const LogEvent& e) {
+        if (e.level == LogLevel::Warning) warnings.push_back(e.message);
+    });
+
+    const size_t p2_deck_before = s.player(P2).main_deck.size();
+    openTheChain(engine, opener);
+    conn.disconnect();
+
+    bool warned = false;
+    for (const auto& w : warnings)
+        if (w.find("ACTIVATE_COST") != std::string::npos &&
+            w.find("Costly Reaction Test Gear") != std::string::npos) warned = true;
+    EXPECT_TRUE(warned)
+        << "an activation whose energy cost cannot be paid must be rejected "
+           "LOUDLY before anything is spent.";
+
+    EXPECT_FALSE(s.getObject(gear).is_exhausted)
+        << "the [E] must not be paid for a cost that cannot be completed";
+    EXPECT_EQ(readyRunesIn(s, P2), 1)
+        << "nothing paid — the one ready rune is still ready";
+    EXPECT_EQ(s.player(P2).main_deck.size(), p2_deck_before)
+        << "onActivate must not have run";
+
+    ASSERT_GE(agent2.p1_had_passed.size(), 2u)
+        << "P2 is asked again after its intent is rejected";
+    EXPECT_TRUE(agent2.p1_had_passed[1])
+        << "P1's priority pass must SURVIVE the rejection. A false 'it "
+           "executed' restarts FEPR, and stepExecuteAndPass clears "
+           "players_passed_priority on entry.";
+    EXPECT_EQ(agent1.call_count, 1)
+        << "P1 passed once and was never re-queried — a spurious FEPR restart "
+           "would hand it priority all over again.";
+}
+
+// ─── (7) …and a LEGITIMATE activation still resets it ──────────────────────
+//
+// The control for (6): the same board with the energy actually available. The
+// activation executes, FEPR restarts from Finalize, and the pass set is
+// cleared — the CR 337.1.b.3 bookkeeping a play gets.
+
+TEST_F(ClosedStateAbilitiesTest, PayableActivationExecutesAndResetsThePassSet) {
+    GameEngine engine(card_db, events, card_registry);
+    PassSetWatchingAgent agent1;
+    PassSetWatchingAgent agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    primeMainPhase(engine);
+    auto& s = engine.mutableState();
+
+    auto opener = addToHandIn(s, P1, kOpener);
+    auto gear   = addGearInBase(s, P2, kCostlyGear);
+    for (int i = 0; i < 3; ++i) addRuneIn(s, P2, Domain::Mind);
+    addToDeckIn(s, P2, kOpener);
+
+    Intent act;
+    act.type = IntentType::ActivateReactionAbility;
+    act.player = P2;
+    act.ability_source = gear;
+    act.ability_index = 0;
+    agent2.script = {act};
+
+    const size_t p2_deck_before = s.player(P2).main_deck.size();
+    openTheChain(engine, opener);
+
+    EXPECT_TRUE(s.getObject(gear).is_exhausted) << "the [E] was paid";
+    EXPECT_EQ(readyRunesIn(s, P2), 0) << "all three runes paid the [3]";
+    EXPECT_EQ(s.player(P2).main_deck.size(), p2_deck_before - 1)
+        << "onActivate ran at resolution — the ability draws 1";
+
+    ASSERT_GE(agent1.call_count, 2)
+        << "the activation restarts FEPR, so P1 is granted priority again";
+    ASSERT_GE(agent1.p1_had_passed.size(), 2u);
+    EXPECT_FALSE(agent1.p1_had_passed[1])
+        << "…with players_passed_priority cleared — P1's earlier pass is "
+           "stale once P2 has acted (CR 337.1.b.3).";
 }

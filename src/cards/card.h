@@ -465,6 +465,26 @@ public:
         return true;
     }
 
+    /// Legality of this gear's [Equip] ability for ONE candidate target.
+    ///
+    /// The gear-level `canEquip` answers "could this be equipped to SOME legal
+    /// target"; that is the right question for the needsEquipTimeTarget path
+    /// (the Card picks the unit itself) but not for the legacy per-unit
+    /// enumeration, which emits one intent per (gear, friendly unit). Where
+    /// the cost DEPENDS on the target — Hextech Gauntlets' energy is [3]
+    /// reduced by the chosen unit's Might — the gear-level answer is true via
+    /// the cheapest unit while an intent naming an expensive one is unpayable,
+    /// so the generator offered it, the executor rejected it, and it stayed
+    /// legal for the agent to pick again: the offered-then-rejected-forever
+    /// burst, just audible.
+    ///
+    /// Default: forward to `canEquip`. ONLY gear whose cost depends on the
+    /// target overrides this.
+    virtual bool canEquipTarget(const GameState& state, PlayerId controller,
+                                GameObjectId /*unit*/) const {
+        return canEquip(state, controller);
+    }
+
     /// Pay the equip cost and attach to unit. Card handles its own cost logic.
     /// Returns true if equip succeeded (cost paid, attached).
     /// Implementations MUST consult `canEquip` first and pay nothing when it
