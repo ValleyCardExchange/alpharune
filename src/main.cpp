@@ -8,8 +8,10 @@
 /// Agents are wired via `buildAgent(spec, ...)`:
 ///   random            — uniform random over legal actions
 ///   human             — block on browser input through HumanAgent
-///   mcts:sims=N       — OpenSpiel MCTSBot wrapped as AgentInterface
-///   ismcts:sims=N     — OpenSpiel ISMCTSBot wrapped as AgentInterface
+///   mcts:sims=N[,eval=score|corpus]
+///                     — OpenSpiel MCTSBot wrapped as AgentInterface
+///   ismcts:sims=N[,eval=score|corpus]
+///                     — OpenSpiel ISMCTSBot wrapped as AgentInterface
 ///
 /// When any seat is human:
 ///   • `god_mode` edits are accepted by the WebSocket API.
@@ -18,6 +20,7 @@
 ///
 /// See docs/play-api.md for the WS wire protocol.
 
+#include "agents/agent_spec.h"
 #include "agents/human_agent.h"
 #include "agents/mcts_agent.h"
 #include "agents/random_agent.h"
@@ -161,45 +164,9 @@ void dumpRegistry(const CardDB& db, const std::string& path) {
     f << out.dump(2) << "\n";
 }
 
-struct AgentSpec {
-    std::string raw;       // original spec string
-    std::string kind;      // "random", "human", "mcts", "ismcts"
-    int sims = 0;          // populated for mcts/ismcts
-};
-
-AgentSpec parseAgentSpec(const std::string& s) {
-    AgentSpec out;
-    out.raw = s;
-    auto colon = s.find(':');
-    out.kind = (colon == std::string::npos) ? s : s.substr(0, colon);
-    if (out.kind != "random" && out.kind != "human" &&
-        out.kind != "mcts" && out.kind != "ismcts") {
-        throw std::runtime_error(
-            "Unknown agent kind '" + out.kind + "'. Expected one of: "
-            "random, human, mcts, ismcts.");
-    }
-    if (colon != std::string::npos) {
-        auto rest = s.substr(colon + 1);
-        // key=value pairs separated by commas; only "sims=N" recognised.
-        size_t i = 0;
-        while (i < rest.size()) {
-            auto eq    = rest.find('=', i);
-            auto comma = rest.find(',', i);
-            if (comma == std::string::npos) comma = rest.size();
-            if (eq != std::string::npos && eq < comma) {
-                auto key = rest.substr(i, eq - i);
-                auto val = rest.substr(eq + 1, comma - eq - 1);
-                if (key == "sims") out.sims = std::stoi(val);
-            }
-            i = comma + 1;
-        }
-        if ((out.kind == "mcts" || out.kind == "ismcts") && out.sims <= 0) {
-            throw std::runtime_error(
-                "Agent '" + out.kind + "' requires sims=N (e.g. " + out.kind + ":sims=50).");
-        }
-    }
-    return out;
-}
+// AgentSpec / parseAgentSpec moved to src/agents/agent_spec.{h,cpp}
+// (riftbound_core) in Task 12.2 — main.cpp is not linkable from
+// riftbound_tests, so the parser could not be unit-tested where it was.
 
 /// `game_seed` MUST be the engine's runGame seed — MctsAgent and IsMctsAgent
 /// forward it into the internal OpenSpiel state so the replayed
@@ -227,11 +194,13 @@ std::unique_ptr<AgentInterface> buildAgent(const AgentSpec& spec,
     }
     if (spec.kind == "mcts") {
         return std::make_unique<MctsAgent>(deck1, deck2, registry,
-                                            game_seed, derived_seed, spec.sims);
+                                            game_seed, derived_seed, spec.sims,
+                                            spec.eval);
     }
     if (spec.kind == "ismcts") {
         return std::make_unique<IsMctsAgent>(deck1, deck2, registry,
-                                              game_seed, derived_seed, spec.sims);
+                                              game_seed, derived_seed, spec.sims,
+                                              spec.eval);
     }
     throw std::runtime_error("Unsupported agent spec '" + spec.raw + "'");
 }
@@ -258,13 +227,25 @@ int main(int argc, char* argv[]) {
         "  human             Block at every decision and wait for a\n"
         "                    browser click via the WebSocket UI. Implies\n"
         "                    --web on, --render-html on, --debug, --trace.\n"
-        "  mcts:sims=N       OpenSpiel MCTSBot with a RandomRolloutEvaluator.\n"
+        "  mcts:sims=N       OpenSpiel MCTSBot with a constant-time position\n"
+        "                    evaluator (no random rollouts).\n"
         "                    N is the simulation budget per decision (try\n"
         "                    sims=20 for fast tests, sims=200+ for stronger\n"
         "                    play). Each selectAction call rebuilds a fresh\n"
         "                    OpenSpiel state by replaying action_history,\n"
         "                    so interactive use is fine but cost grows with\n"
         "                    decision depth.\n"
+        "                    Optional ,eval=score|corpus picks the leaf\n"
+        "                    evaluator (default score):\n"
+        "                      score   score difference only — the signal\n"
+        "                              that wins games, and nothing else.\n"
+        "                      corpus  six evidence-backed terms (score,\n"
+        "                              battlefields held, board width, held\n"
+        "                              Reaction spells, live-Flow trash,\n"
+        "                              empowered legend). See\n"
+        "                              docs/superpowers/specs/\n"
+        "                              2026-09-07-corpus-evaluator-design.md\n"
+        "                    e.g. --agent1 mcts:sims=50,eval=corpus\n"
         "  ismcts:sims=N     OpenSpiel ISMCTSBot for imperfect-info search.\n"
         "                    Same N semantics as MCTS. Currently behaves\n"
         "                    like MCTS at search time — proper hidden-info\n"
@@ -297,10 +278,12 @@ int main(int argc, char* argv[]) {
          "(validation/export tool; does not require decks)")
         ("agent1", po::value<std::string>()->default_value("random"),
          "Player 1 agent spec (see top of --help for full descriptions). "
-         "One of: random | human | mcts:sims=N | ismcts:sims=N")
+         "One of: random | human | mcts:sims=N[,eval=score|corpus] | "
+         "ismcts:sims=N[,eval=score|corpus]")
         ("agent2", po::value<std::string>()->default_value("random"),
          "Player 2 agent spec (see top of --help for full descriptions). "
-         "One of: random | human | mcts:sims=N | ismcts:sims=N")
+         "One of: random | human | mcts:sims=N[,eval=score|corpus] | "
+         "ismcts:sims=N[,eval=score|corpus]")
         ("web", po::value<std::string>()->default_value("auto"),
          "Web UI mode: auto (default — ON if any seat is human, else OFF), "
          "on (force ON), off (force OFF, even with human seats)")

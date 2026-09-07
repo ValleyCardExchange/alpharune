@@ -1,5 +1,7 @@
 #include "mcts_agent.h"
 
+#include "corpus_evaluator.h"
+
 #include "core/game_state.h"
 #include "core/intent.h"
 #include "core/game_object.h"
@@ -22,24 +24,24 @@ namespace riftbound {
 
 namespace {
 
-// A heuristic evaluator that scores Riftbound positions directly from
-// the engine state instead of running noisy random rollouts to terminal.
+// Base for the position evaluators that score Riftbound states directly
+// from the engine state instead of running noisy random rollouts to
+// terminal.
 //
-// Why: at small sim budgets (5–20), RandomRolloutEvaluator gives MCTS
-// almost no useful signal — each rollout takes ~200 random actions to
-// reach a terminal and the variance across rollouts swamps the
-// inter-action differences MCTS is trying to compare. Empirically we
+// Why not rollouts: at small sim budgets (5–20), RandomRolloutEvaluator
+// gives MCTS almost no useful signal — each rollout takes ~200 random
+// actions to reach a terminal and the variance across rollouts swamps
+// the inter-action differences MCTS is trying to compare. Empirically we
 // saw MCTS-5 lose ~63% to random because the noisy rollouts left MCTS
 // picking among un-differentiated children. Replacing the rollout with
 // a constant-time heuristic restores the signal/budget ratio so MCTS
 // at low sims can actually beat random.
 //
-// Heuristic (from P1's perspective):
-//   • Primary: score difference, normalised to [-1, +1] by victory_score.
-//   • Secondary: total on-board might (small weight) — proxies for
-//     near-term scoring threat / combat advantage.
-//   • Tertiary: hand size advantage (very small weight).
-class RiftboundHeuristicEvaluator : public ::open_spiel::algorithms::Evaluator {
+// Subclasses supply only `evaluateEngineState`; this base owns the two
+// things every evaluator must get right identically — the terminal
+// short-circuit to the canonical `Returns()`, and the strategic `Prior`.
+// Selected per agent by `--agent1 mcts:sims=N,eval=score|corpus`.
+class RiftboundEvaluatorBase : public ::open_spiel::algorithms::Evaluator {
 public:
     std::vector<double> Evaluate(const ::open_spiel::State& state) override {
         // Terminal: use the canonical Returns directly so MCTS sees
@@ -49,25 +51,15 @@ public:
         }
         const auto* rb = dynamic_cast<const openspiel::RiftboundState*>(&state);
         if (!rb) return {0.0, 0.0};
-        const auto& s = rb->engineState();
-
-        const auto& p1 = s.player(PlayerId::Player1);
-        const auto& p2 = s.player(PlayerId::Player2);
-        const double victory = std::max(1, s.mode.victory_score);
-
-        // Score-only heuristic. A previous version added might / units /
-        // hand-size signals; they appeared to mislead MCTS at low sim
-        // budgets (sims=5 dropped from 37% to 20% vs random). The
-        // game-winning signal is score, period — that's what the bot
-        // should chase, and noisy proxies for "position strength" only
-        // pollute the value estimate when the search budget is too small
-        // to disentangle them via tree expansion. With more sims this
-        // could be reintroduced as a tunable; today, keep it minimal.
-        double val = static_cast<double>(p1.score - p2.score) / victory;
-        if (val >  1.0) val =  1.0;
-        if (val < -1.0) val = -1.0;
-        return {val, -val};
+        auto v = evaluateEngineState(rb->engineState());
+        return {v.first, v.second};
     }
+
+    /// Value of a NON-terminal position as {player1, player2}, each in
+    /// [-1, +1]. Perfect-information: the same contract the score-only
+    /// evaluator has always had.
+    virtual std::pair<double, double> evaluateEngineState(
+        const GameState& s) const = 0;
 
     ::open_spiel::ActionsAndProbs Prior(const ::open_spiel::State& state) override {
         // Strategically-biased prior. The point at sims=5 isn't to be
@@ -172,6 +164,53 @@ public:
     }
 };
 
+// `eval=score` (the default) — score difference and nothing else.
+//
+// A previous version added might / units / hand-size signals; they
+// appeared to mislead MCTS at low sim budgets (sims=5 dropped from 37%
+// to 20% vs random). The game-winning signal is score, period — noisy
+// proxies for "position strength" only pollute the value estimate when
+// the search budget is too small to disentangle them via tree
+// expansion. That lesson is what `eval=corpus` below has to beat: its
+// terms are evidence-backed rather than invented, and every one of them
+// is scaled by 1/victory_score so score stays dominant term-by-term.
+class RiftboundHeuristicEvaluator : public RiftboundEvaluatorBase {
+public:
+    std::pair<double, double> evaluateEngineState(
+        const GameState& s) const override {
+        const auto& p1 = s.player(PlayerId::Player1);
+        const auto& p2 = s.player(PlayerId::Player2);
+        const double victory = std::max(1, s.mode.victory_score);
+        double val = static_cast<double>(p1.score - p2.score) / victory;
+        if (val >  1.0) val =  1.0;
+        if (val < -1.0) val = -1.0;
+        return {val, -val};
+    }
+};
+
+// `eval=corpus` — the six-term corpus heuristic. All the arithmetic is
+// in `corpus_evaluator.{h,cpp}` (riftbound_core, unit-tested); this
+// wrapper exists only to attach it to OpenSpiel's Evaluator interface
+// with the shared terminal short-circuit and Prior above.
+class RiftboundCorpusEvaluator : public RiftboundEvaluatorBase {
+public:
+    std::pair<double, double> evaluateEngineState(
+        const GameState& s) const override {
+        return corpusEvaluate(s);
+    }
+};
+
+std::shared_ptr<::open_spiel::algorithms::Evaluator> makeEvaluator(
+    EvaluatorKind kind) {
+    switch (kind) {
+        case EvaluatorKind::Corpus:
+            return std::make_shared<RiftboundCorpusEvaluator>();
+        case EvaluatorKind::Score:
+            break;
+    }
+    return std::make_shared<RiftboundHeuristicEvaluator>();
+}
+
 } // namespace
 
 namespace {
@@ -225,7 +264,8 @@ struct MctsAgent::Impl {
     uint64_t engine_seed;
 
     Impl(std::string d1, std::string d2, std::string reg,
-         uint64_t eng_seed, uint64_t mcts_seed, int sim_count)
+         uint64_t eng_seed, uint64_t mcts_seed, int sim_count,
+         EvaluatorKind eval_kind)
         : sims(sim_count), engine_seed(eng_seed) {
         const uint64_t engine_seed = eng_seed;  // alias for the body below
         // OpenSpiel's RiftboundGame uses this seed to seed the engine
@@ -249,9 +289,11 @@ struct MctsAgent::Impl {
         // signal and is O(1) per leaf (no rollouts). At low sim budgets
         // the variance of rollouts swamps inter-action differences;
         // a deterministic, slightly-correlated signal beats a noisy
-        // strong one.
+        // strong one. `eval=corpus` swaps in the evidence-backed
+        // six-term heuristic; the A/B in docs/superpowers/smoke/ is the
+        // only calibration either weighting has.
         (void)mcts_seed;  // unused for heuristic; bot keeps its own seed below
-        auto evaluator = std::make_shared<RiftboundHeuristicEvaluator>();
+        auto evaluator = makeEvaluator(eval_kind);
         bot = std::make_unique<::open_spiel::algorithms::MCTSBot>(
             *game, evaluator,
             /*uct_c=*/1.4,
@@ -277,11 +319,12 @@ MctsAgent::MctsAgent(std::string deck1_path,
                      std::string registry_path,
                      uint64_t    engine_seed,
                      uint64_t    mcts_seed,
-                     int         sims)
+                     int         sims,
+                     EvaluatorKind eval)
     : impl_(std::make_unique<Impl>(std::move(deck1_path),
                                    std::move(deck2_path),
                                    std::move(registry_path),
-                                   engine_seed, mcts_seed, sims)) {}
+                                   engine_seed, mcts_seed, sims, eval)) {}
 
 MctsAgent::~MctsAgent() = default;
 
@@ -382,7 +425,8 @@ struct IsMctsAgent::Impl {
     uint64_t engine_seed;
 
     Impl(std::string d1, std::string d2, std::string reg,
-         uint64_t eng_seed, uint64_t mcts_seed, int sim_count)
+         uint64_t eng_seed, uint64_t mcts_seed, int sim_count,
+         EvaluatorKind eval_kind)
         : sims(sim_count), engine_seed(eng_seed) {
         const uint64_t engine_seed = eng_seed;  // alias for the body below
         game = ::open_spiel::LoadGame(buildGameStr(d1, d2, reg, engine_seed));
@@ -392,7 +436,7 @@ struct IsMctsAgent::Impl {
                 "check deck/registry paths and OpenSpiel registration.");
         }
         (void)mcts_seed;  // unused for evaluator; bot still uses its own seed below
-        auto evaluator = std::make_shared<RiftboundHeuristicEvaluator>();
+        auto evaluator = makeEvaluator(eval_kind);
         bot = std::make_unique<::open_spiel::algorithms::ISMCTSBot>(
             /*seed=*/static_cast<int>(mcts_seed ^ 0x3C3C3C3C),
             evaluator,
@@ -422,11 +466,12 @@ IsMctsAgent::IsMctsAgent(std::string deck1_path,
                          std::string registry_path,
                          uint64_t    engine_seed,
                          uint64_t    mcts_seed,
-                         int         sims)
+                         int         sims,
+                         EvaluatorKind eval)
     : impl_(std::make_unique<Impl>(std::move(deck1_path),
                                    std::move(deck2_path),
                                    std::move(registry_path),
-                                   engine_seed, mcts_seed, sims)) {}
+                                   engine_seed, mcts_seed, sims, eval)) {}
 
 IsMctsAgent::~IsMctsAgent() = default;
 

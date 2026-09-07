@@ -23,6 +23,7 @@
 /// Wiring: see `src/main_play.cpp`'s `buildAgent("mcts:sims=N", ...)`.
 
 #include "agent_interface.h"
+#include "agent_spec.h"   // EvaluatorKind
 
 #include <cstdint>
 #include <memory>
@@ -47,12 +48,17 @@ public:
     /// state. Distinct per-seat so two MctsAgent instances in the
     /// same game explore independent trees.
     /// `sims` is the MCTSBot simulation budget per decision.
+    /// `eval` picks the leaf-position evaluator: `Score` (default) is
+    /// the historical score-difference heuristic; `Corpus` is the
+    /// six-term corpus heuristic in `corpus_evaluator.h`. The default
+    /// keeps every pre-Task-12 call site behaving exactly as before.
     MctsAgent(std::string deck1_path,
               std::string deck2_path,
               std::string registry_path,
               uint64_t    engine_seed,
               uint64_t    mcts_seed,
-              int         sims);
+              int         sims,
+              EvaluatorKind eval = EvaluatorKind::Score);
     ~MctsAgent() override;
 
     MctsAgent(const MctsAgent&) = delete;
@@ -79,7 +85,8 @@ public:
                 std::string registry_path,
                 uint64_t    engine_seed,
                 uint64_t    mcts_seed,
-                int         sims);
+                int         sims,
+                EvaluatorKind eval = EvaluatorKind::Score);
     ~IsMctsAgent() override;
 
     IsMctsAgent(const IsMctsAgent&) = delete;

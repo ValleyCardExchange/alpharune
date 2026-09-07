@@ -275,6 +275,7 @@ add_library(riftbound_core
     # library (NOT in the riftbound executable alongside mcts_agent.cpp) so
     # riftbound_tests can link and unit-test them; neither pulls in OpenSpiel.
     src/agents/corpus_evaluator.cpp
+    src/agents/agent_spec.cpp
 )
 
 target_include_directories(riftbound_core PUBLIC src)
