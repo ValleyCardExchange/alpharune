@@ -17,7 +17,34 @@ public:
 
     bool hasEquipAbility() const override { return true; }
 
+    // "[Equip] [3][A], reduced by the chosen unit's Might" — the energy is
+    // TARGET-dependent, so the target-agnostic predicate asks whether SOME
+    // friendly unit on board is affordable (the Mightiest one is the cheapest)
+    // and whether a rune remains to recycle for the [A].
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        int ready = 0, total = 0;
+        auto base_loc = BaseLocation{controller};
+        for (const auto& [id, obj] : state.objects) {
+            if (!obj.isRune() || obj.controller != controller) continue;
+            if (!obj.location.has_value() ||
+                *obj.location != LocationId{base_loc}) continue;
+            total++;
+            if (!obj.is_exhausted) ready++;
+        }
+        if (total == 0) return false;  // nothing to recycle for the [A]
+        int best_might = -1;
+        for (const auto& [id, obj] : state.objects) {
+            if (!obj.isUnit() || obj.controller != controller) continue;
+            if (!obj.location.has_value()) continue;
+            best_might = std::max(best_might, obj.current_might);
+        }
+        if (best_might < 0) return false;  // no unit to equip
+        int cheapest = std::max(0, 3 - best_might);
+        return ready >= cheapest;
+    }
+
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         if (!ctx.state.objectExists(unit)) return false;
         auto& state = ctx.state;
         auto player = ctx.controller;
@@ -29,8 +56,9 @@ public:
         int energy_cost = 3 - reduction;
         if (energy_cost < 0) energy_cost = 0;
 
-        // Pre-check: enough ready runes for energy AND one rune to recycle for
-        // [A]. Bail (no state change) if either is unpayable.
+        // TARGET-SPECIFIC affordability (canEquip above answered the
+        // target-agnostic half): this particular unit's Might may not reduce
+        // the energy far enough. Bail with no state change if so.
         int ready_count = 0;
         GameObjectId any_rune = kInvalidId;
         for (auto& [id, obj] : state.objects) {

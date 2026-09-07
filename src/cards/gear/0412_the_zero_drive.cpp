@@ -18,8 +18,12 @@ public:
 
     // ── Equip [1][B] ──
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canStandardEquip(state, controller, /*energy=*/1, Domain::Mind);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
-        return payEquipAndAttach(ctx, ctx.source, unit, /*energy=*/1, Domain::Mind);
+        if (!canEquip(ctx.state, ctx.controller)) return false;
+        return standardEquip(ctx, ctx.source, unit, /*energy=*/1, Domain::Mind);
     }
 
     // ── Deathknell — Banish me (death replacement on the bearer) ──
@@ -90,62 +94,6 @@ public:
         ctx.executor.banishObject(ctx.source);
     }
 
-private:
-    // Pay [energy] ready runes + recycle one matching-domain rune for power,
-    // then attach. Mirrors equip_cards.cpp::standardEquip with an upfront
-    // affordability pre-check so an unaffordable equip never half-pays.
-    static bool payEquipAndAttach(CardContext& ctx, GameObjectId gear_id,
-                                   GameObjectId unit_id, int energy_cost,
-                                   Domain domain) {
-        auto& state = ctx.state;
-        auto player = ctx.controller;
-        auto& ps = state.player(player);
-        auto base_loc = BaseLocation{player};
-
-        int ready_count = 0;
-        GameObjectId domain_rune = kInvalidId;
-        for (auto& [id, obj] : state.objects) {
-            if (!obj.isRune() || obj.controller != player) continue;
-            if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-            if (!obj.is_exhausted) ready_count++;
-            if (domain_rune == kInvalidId) {
-                for (auto d : obj.domains) {
-                    if (d == domain) { domain_rune = id; break; }
-                }
-            }
-        }
-        if (ready_count < energy_cost) return false;
-        if (domain_rune == kInvalidId) return false;
-
-        if (energy_cost > 0) {
-            int remaining = energy_cost;
-            for (auto& [id, obj] : state.objects) {
-                if (remaining <= 0) break;
-                if (!obj.isRune() || obj.controller != player || obj.is_exhausted) continue;
-                if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-                obj.is_exhausted = true;
-                remaining--;
-            }
-        }
-        {
-            auto& dr = state.getObject(domain_rune);
-            dr.location = std::nullopt;
-            dr.zone = ZoneType::RuneDeck;
-            ps.rune_deck.insert(ps.rune_deck.begin(), domain_rune);
-        }
-
-        auto& gear = state.getObject(gear_id);
-        auto& unit = state.getObject(unit_id);
-        gear.attached_to = unit_id;
-        unit.attachments.push_back(gear_id);
-        gear.location = unit.location;
-        gear.zone = unit.zone;
-        unit.attachment_might_bonus += gear.might_bonus;
-        unit.recomputeMight();
-        ctx.events.emit(ObjectStateChangedEvent{gear_id, "attached"});
-        ctx.events.emit(ObjectStateChangedEvent{unit_id, "equipped"});
-        return true;
-    }
 private:
     const CardDef def_ = [] {
         CardDef d;

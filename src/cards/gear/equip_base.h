@@ -16,31 +16,79 @@
 
 namespace riftbound {
 
+// ─── Shared equip-cost predicate ────────────────────────────────────────────
+// ONE scan of the controller's base, shared by `standardEquip` (which needs
+// the rune ids to spend) and by `SimpleEquipGear::canEquip` (which needs only
+// the yes/no). Keeping both on this scan is what makes `canEquip` and
+// `onEquip` incapable of disagreeing.
+//
+// Recycling a rune for power carries NO readiness condition (CR 164.2.b —
+// "Recycle this: [Reaction] — Add [C]"), which is why `domain_rune` ignores
+// `is_exhausted`; a rune exhausted to pay the energy may then be recycled for
+// the power.
+struct StandardEquipScan {
+    int ready_runes = 0;                 // in base, any domain
+    GameObjectId domain_rune = kInvalidId;  // matching domain, exhausted or ready
+    bool payable(int energy_cost) const {
+        return ready_runes >= energy_cost && domain_rune != kInvalidId;
+    }
+};
+
+inline StandardEquipScan scanStandardEquip(const GameState& state, PlayerId player,
+                                           Domain domain) {
+    StandardEquipScan scan;
+    auto base_loc = BaseLocation{player};
+    for (const auto& [id, obj] : state.objects) {
+        if (!obj.isRune() || obj.controller != player) continue;
+        if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
+        if (!obj.is_exhausted) scan.ready_runes++;
+        if (scan.domain_rune == kInvalidId) {
+            for (auto d : obj.domains) {
+                if (d == domain) { scan.domain_rune = id; break; }
+            }
+        }
+    }
+    return scan;
+}
+
+/// `Card::canEquip` for any gear whose equip cost is [energy] + one [domain]
+/// power — the predicate half of `standardEquip`.
+inline bool canStandardEquip(const GameState& state, PlayerId player,
+                             int energy_cost, Domain domain) {
+    return scanStandardEquip(state, player, domain).payable(energy_cost);
+}
+
+/// `Card::canEquip` for [A] gear: the energy must be coverable by ready runes
+/// AND one rune must remain in base to recycle for the [A] power — an
+/// exhausted one counts, including one just exhausted for the energy. That is
+/// exactly `total runes in base >= max(1, energy_cost)`.
+inline bool canUniversalEquip(const GameState& state, PlayerId player,
+                              int energy_cost) {
+    int ready = 0, total = 0;
+    auto base_loc = BaseLocation{player};
+    for (const auto& [id, obj] : state.objects) {
+        if (!obj.isRune() || obj.controller != player) continue;
+        if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
+        total++;
+        if (!obj.is_exhausted) ready++;
+    }
+    return ready >= energy_cost && total >= std::max(1, energy_cost);
+}
+
 // ─── Canonical standard equip: pay [energy] + one [domain] power, then attach ──
 inline bool standardEquip(CardContext& ctx, GameObjectId gear_id, GameObjectId unit_id,
                           int energy_cost, Domain domain) {
     auto& state = ctx.state;
     auto player = ctx.controller;
     auto& ps = state.player(player);
-    auto base_loc = BaseLocation{player};
 
     // PRE-CHECK: bail (no state change) unless BOTH the energy and the
     // domain-power can be paid — otherwise the loops below would partially
-    // pay and then "equip for free".
-    int ready_count = 0;
-    GameObjectId domain_rune = kInvalidId;
-    for (auto& [id, obj] : state.objects) {
-        if (!obj.isRune() || obj.controller != player) continue;
-        if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
-        if (!obj.is_exhausted) ready_count++;
-        if (domain_rune == kInvalidId) {
-            for (auto d : obj.domains) {
-                if (d == domain) { domain_rune = id; break; }
-            }
-        }
-    }
-    if (ready_count < energy_cost) return false;
-    if (domain_rune == kInvalidId)  return false;
+    // pay and then "equip for free". Same scan `canStandardEquip` answers on.
+    auto scan = scanStandardEquip(state, player, domain);
+    if (!scan.payable(energy_cost)) return false;
+    const GameObjectId domain_rune = scan.domain_rune;
+    auto base_loc = BaseLocation{player};
 
     // Pay energy: exhaust ready runes.
     if (energy_cost > 0) {
@@ -88,7 +136,11 @@ public:
         : equip_domain_(equip_domain), energy_cost_(energy_cost) {}
 
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canStandardEquip(state, controller, energy_cost_, equip_domain_);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         return standardEquip(ctx, ctx.source, unit, energy_cost_, equip_domain_);
     }
 
@@ -104,7 +156,11 @@ public:
         : energy_cost_(energy_cost) {}
 
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canUniversalEquip(state, controller, energy_cost_);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         auto& state = ctx.state;
         auto player = ctx.controller;
         auto& ps = state.player(player);

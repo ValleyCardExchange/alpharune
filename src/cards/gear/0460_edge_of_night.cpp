@@ -17,7 +17,11 @@ public:
     const CardDef& def() const override { return def_; }
 
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canStandardEquip(state, controller, /*energy_cost=*/0, Domain::Chaos);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         // [C] = Chaos-domain power, no energy (mirrors original
         // SimpleEquipGear(460, Domain::Chaos) with energy_cost 0).
         return standardEquip(ctx, ctx.source, unit,

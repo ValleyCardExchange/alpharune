@@ -446,8 +446,29 @@ public:
     /// Whether this gear has an equip ability.
     virtual bool hasEquipAbility() const { return false; }
 
+    /// Legality of this gear's [Equip] ability RIGHT NOW for `controller`,
+    /// independent of which unit would be equipped. THE one predicate the
+    /// main-phase generator gates equip offers on, and the first thing
+    /// `onEquip` checks — so payment is all-or-nothing by construction and
+    /// an unpayable equip is never offered (an unpayable offer the agent
+    /// re-picks forever eats a whole turn: replay-loop iteration 0 saw one
+    /// unpayable Last Rites chosen 497 times in a single main phase).
+    ///
+    /// Default `true` so the registry guard test in
+    /// `tests/cards/test_equip_legality.cpp` NAMES every gear that declares
+    /// `hasEquipAbility()` and forgets to override this.
+    ///
+    /// Target-specific legality (a cost that varies with the chosen unit)
+    /// stays inside `onEquip`; this predicate answers "could this gear be
+    /// equipped to SOME legal target".
+    virtual bool canEquip(const GameState& state, PlayerId controller) const {
+        return true;
+    }
+
     /// Pay the equip cost and attach to unit. Card handles its own cost logic.
     /// Returns true if equip succeeded (cost paid, attached).
+    /// Implementations MUST consult `canEquip` first and pay nothing when it
+    /// is false.
     virtual bool onEquip(CardContext& ctx, GameObjectId unit) { return false; }
 
     /// Whether THIS gear defers equip-time target selection to onEquip

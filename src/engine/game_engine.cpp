@@ -1289,6 +1289,13 @@ void GameEngine::executeIntent(const Intent& intent) {
                                                           : kInvalidId;
                         if (gear_card->onEquip(equip_ctx, target)) {
                             cleanup();
+                        } else {
+                            // canEquip gates the offer, so a rejection here
+                            // means the two disagree (or a hand-built intent
+                            // reached the executor). Never silent again.
+                            events_.logWarn("EQUIP: " + source.name +
+                                            " rejected — offered but unpayable "
+                                            "(canEquip/onEquip disagree)");
                         }
                         break;
                     }
@@ -2839,6 +2846,14 @@ std::vector<Intent> GameEngine::generateMainPhaseActions(PlayerId player) const 
 
         Card* gear_card = card_registry_.get(obj.card_def_id);
         if (!gear_card || !gear_card->hasEquipAbility()) continue;
+        // Affordability gate (spec addendum #16). Card::canEquip is the ONE
+        // legality predicate the generator consults — no card-name logic here.
+        // Without it an unpayable equip stayed legal forever and the agent
+        // re-picked it every decision: seed 2000 burned a whole Kennen main
+        // phase on 497 consecutive unpayable Last Rites activations. Gating
+        // before the branch covers BOTH the needsEquipTimeTarget path and the
+        // legacy per-unit enumeration below.
+        if (!gear_card->canEquip(state_, player)) continue;
 
         if (gear_card->needsEquipTimeTarget()) {
             // One intent per gear; target chosen at resolve via pickTarget.

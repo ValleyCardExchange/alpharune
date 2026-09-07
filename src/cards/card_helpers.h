@@ -21,23 +21,45 @@ constexpr CardDefId kGoldGearCardDefId = 326;
 
 // ── Equip: pay one power (of `domain`, or any rune if nullopt), then attach ──
 // Complements the energy+Domain `standardEquip` overload in gear/equip_base.h.
-inline bool payOnePower(CardContext& ctx, PlayerId player,
-                        std::optional<Domain> domain) {
-    auto& state = ctx.state;
+//
+// CR 164.2.b — a rune's power ability is "Recycle this: [Reaction] — Add [C]"
+// with NO readiness condition, so an EXHAUSTED rune pays power just as well as
+// a ready one; the engine's own canonical payer already says so ("Each rune in
+// base (exhausted or ready) of matching domain can be recycled for 1 Power").
+// This picker mirrors it, and PREFERS an exhausted rune so paying power never
+// burns a ready one that could still be spent on energy.
+inline GameObjectId findPowerRune(const GameState& state, PlayerId player,
+                                  std::optional<Domain> domain) {
     auto base_loc = BaseLocation{player};
-    GameObjectId rune = kInvalidId;
-    for (auto& [id, obj] : state.objects) {
+    GameObjectId exhausted = kInvalidId, ready = kInvalidId;
+    for (const auto& [id, obj] : state.objects) {
         if (!obj.isRune() || obj.controller != player) continue;
-        if (obj.is_exhausted) continue;
         if (!obj.location.has_value() || *obj.location != LocationId{base_loc}) continue;
         if (domain.has_value()) {
             bool match = false;
             for (auto d : obj.domains) if (d == *domain) { match = true; break; }
             if (!match) continue;
         }
-        rune = id;
-        break;
+        if (obj.is_exhausted) {
+            if (exhausted == kInvalidId) exhausted = id;
+        } else if (ready == kInvalidId) {
+            ready = id;
+        }
     }
+    return exhausted != kInvalidId ? exhausted : ready;
+}
+
+/// `Card::canEquip` for gear whose whole cost is one power — the predicate
+/// half of `payOnePower`.
+inline bool canPayOnePower(const GameState& state, PlayerId player,
+                           std::optional<Domain> domain) {
+    return findPowerRune(state, player, domain) != kInvalidId;
+}
+
+inline bool payOnePower(CardContext& ctx, PlayerId player,
+                        std::optional<Domain> domain) {
+    auto& state = ctx.state;
+    GameObjectId rune = findPowerRune(state, player, domain);
     if (rune == kInvalidId) return false;
     auto& dr = state.getObject(rune);
     dr.location = std::nullopt;

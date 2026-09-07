@@ -16,7 +16,11 @@ class Svellsongur : public GearCard {
 public:
     const CardDef& def() const override { return def_; }
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canStandardEquip(state, controller, /*energy_cost=*/1, Domain::Calm);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         return standardEquip(ctx, ctx.source, unit,
                                          /*energy_cost=*/1, Domain::Calm);
     }

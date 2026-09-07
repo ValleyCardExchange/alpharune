@@ -23,9 +23,13 @@ public:
     }
 
     bool hasEquipAbility() const override { return true; }
+    // "[Equip] — Spend 1 XP": the whole cost is the XP.
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return state.player(controller).xp >= 1;
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         auto& ps = ctx.state.player(ctx.controller);
-        if (ps.xp < 1) return false;  // can't pay the cost
         if (!ctx.state.objectExists(unit)) return false;
         ps.xp -= 1;  // Spend 1 XP
         ctx.events.logTrace("  EQUIP_COST: spent 1 XP");

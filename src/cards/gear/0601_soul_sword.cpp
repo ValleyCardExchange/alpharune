@@ -16,7 +16,11 @@ class SoulSword : public GearCard {
 public:
     const CardDef& def() const override { return def_; }
     bool hasEquipAbility() const override { return true; }
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        return canPayOnePower(state, controller, Domain::Calm);
+    }
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         // [G] equip: recycle a Calm rune for power.
         return standardEquip(ctx, ctx.source, unit, Domain::Calm);
     }

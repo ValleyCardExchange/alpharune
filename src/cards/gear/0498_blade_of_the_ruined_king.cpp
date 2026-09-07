@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "cards/card_helpers.h"
 
 namespace riftbound {
 namespace {
@@ -16,27 +17,25 @@ public:
     const CardDef& def() const override { return def_; }
     bool hasEquipAbility() const override { return true; }
 
+    // "[Equip] — [Y], Kill a friendly unit": both halves of the additional
+    // cost, checked target-agnostically. The victim must be a friendly unit
+    // OTHER than the equip target, so two friendly units on board means every
+    // possible target leaves one to kill.
+    bool canEquip(const GameState& state, PlayerId controller) const override {
+        if (!canPayOnePower(state, controller, Domain::Order)) return false;
+        int friendly_units = 0;
+        for (const auto& [id, obj] : state.objects) {
+            if (!obj.isUnit() || obj.controller != controller) continue;
+            if (!obj.location.has_value()) continue;
+            if (++friendly_units >= 2) return true;
+        }
+        return false;
+    }
+
     bool onEquip(CardContext& ctx, GameObjectId unit) override {
+        if (!canEquip(ctx.state, ctx.controller)) return false;
         auto& state = ctx.state;
         auto player = ctx.controller;
-        auto& ps = state.player(player);
-        auto base_loc = BaseLocation{player};
-
-        // PRE-CHECK both portions of the additional cost before committing
-        // anything (mirror standardEquip's all-or-nothing discipline):
-        //   1) an Order ([Y]) power rune to recycle, and
-        //   2) a killable friendly unit OTHER than the equip target.
-        GameObjectId order_rune = kInvalidId;
-        for (auto& [id, obj] : state.objects) {
-            if (!obj.isRune() || obj.controller != player) continue;
-            if (!obj.location.has_value() ||
-                *obj.location != LocationId{base_loc}) continue;
-            for (auto d : obj.domains) {
-                if (d == Domain::Order) { order_rune = id; break; }
-            }
-            if (order_rune != kInvalidId) break;
-        }
-        if (order_rune == kInvalidId) return false;
 
         std::vector<GameObjectId> killable;
         for (auto& [id, obj] : state.objects) {
@@ -45,7 +44,6 @@ public:
             if (id == unit) continue;  // can't kill the unit we're equipping
             killable.push_back(id);
         }
-        if (killable.empty()) return false;
 
         // Commit cost 1: kill a friendly unit (agent choice).
         GameObjectId victim = pickTarget(ctx, "Blade of the Ruined King: "
@@ -57,14 +55,9 @@ public:
         if (!state.objectExists(victim)) return false;
         ctx.executor.killObject(victim);
 
-        // Commit cost 2: recycle the Order power rune for [Y].
-        {
-            auto& dr = state.getObject(order_rune);
-            ctx.events.logTrace("  EQUIP_COST: recycled " + dr.name + " for [Y]");
-            dr.location = std::nullopt;
-            dr.zone = ZoneType::RuneDeck;
-            ps.rune_deck.insert(ps.rune_deck.begin(), order_rune);
-        }
+        // Commit cost 2: recycle the Order power rune for [Y] (CR 164.2.b —
+        // an exhausted rune pays power, and is preferred over a ready one).
+        if (!payOnePower(ctx, player, Domain::Order)) return false;
 
         // Attach.
         if (!state.objectExists(unit)) return false;
