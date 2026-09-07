@@ -487,6 +487,28 @@ it is linked from.
     scope; a follow-up would add the flow_source / restriction bits to the
     action key.
 
+13. **(added at the final whole-branch review, 2026-09-07) Two scope
+    boundaries stated so "no approximations" stays literally true.**
+    (a) Flow is implemented for SPELLS only (`generateFlowPlayActions`
+    gates on `isSpell()`); CR 829.1.a says Flow is present on spells, and
+    no non-spell Flow card exists in either deck. (b) Up from the Deep's
+    Tentacle tokens are played to the controller's base; CR 355.2.a lets a
+    controller play a unit to a battlefield they control — the engine's
+    convention for every existing token-maker is base, and the agent may
+    move them next turn. Both are boundaries of the engine's play-location
+    model, not card-text narrowing; a follow-up could offer the
+    battlefield choice for token plays engine-wide.
+14. **(final review)** The closed-state reaction path executed spells
+    through `ChainManager` rather than `executePlaySpell`, so Flow /
+    Tomb reaction offers were generated but mis-executed. Fixed in the
+    final fix wave by routing the reaction play through the one executor
+    via an injected callback; tests execute a closed-state Flow play, a
+    granted-Flow reaction, and a Tomb-restricted reaction end-to-end.
+    Minefield's "top 2 to trash" now uses `burnCards` (burn-out parity
+    with Kennen). The live hidden-reveal path now emits
+    `PlayedFromFacedownEvent`; the dead `executePlayFromHidden` is
+    removed.
+
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board
 exit); #28 rewritten per addendum #11's review to assert no

@@ -135,3 +135,16 @@ INCOMPLETE (stub+metadata-only): 0   engine-gap flagged: 50
 
 Both match the expected numbers (1121 passed / 1 pre-existing disabled;
 792 total cards / 0 INCOMPLETE).
+
+## Coverage gap (recorded at the final review)
+
+The batch witnesses the mechanics firing (Burn, conquer grants, Flow plays
+from trash, Empower/Disempower) and the absence of engine errors. It does
+NOT witness a Tomb-discounted play or a granted-Flow offer being TAKEN
+end-to-end: Sandswept Tomb was the live battlefield in 2 of 11 games with
+0 restricted plays, and 5 grants vs 6 flow plays does not establish that a
+granted offer was chosen. Per spec addendum #12 the OpenSpiel-facing agent
+cannot deliberately choose either offer while the plain one is legal, so
+this gap is expected — and the closed-state execution path those offers
+share was found and fixed only at the final whole-branch review (addendum
+#14). Those two paths are covered by unit tests, not by this batch.
