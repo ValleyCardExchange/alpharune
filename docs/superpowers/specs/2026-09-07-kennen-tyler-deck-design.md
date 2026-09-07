@@ -538,6 +538,27 @@ it is linked from.
     condition) and the engine's own canonical payer. A registry-wide guard
     test asserts every equip gear reports unpayable on an empty-resource
     state and leaves it untouched.
+17. **(replay-loop iteration 0, 2026-09-07 — review of #15/#16)** Three
+    residual defects on the same paths, none reachable in the Kennen /
+    Rengar batch decks (Last Rites is the only equip gear in either and
+    costs no energy): (a) the standard equip payer and predicate let ONE
+    rune both exhaust for energy and recycle for power — the engine's
+    canonical additional-cost payer excludes the recycled rune from the
+    energy count, so the equip path must too (Boneshiver with a single
+    ready Body rune is the concrete case); (b) `Card::canEquip` is
+    target-agnostic, so a gear whose cost depends on the target (Hextech
+    Gauntlets' energy is 3 minus the target's Might) can still be offered
+    against an unaffordable target and rejected repeatedly — a loud
+    burst instead of a silent one; legality must be checked per (gear,
+    target) where the cost depends on the target; (c) Blade of the Ruined
+    King kills the friendly unit BEFORE paying its power, across a
+    target-pick suspend point — pay first, kill last. Also folded from
+    the #15 review: the closed-state activation callback infers "did it
+    execute" from a resource fingerprint; `executeIntent`'s activation
+    path must report success explicitly; an activation whose energy is
+    underpaid must be rejected rather than executed; and the priors
+    loader must throw the documented `runtime_error` for non-numeric
+    values.
 
 Tests added by this addendum: #28 (tokens don't empower), #29 (both Flow
 costs offered and each pays its own), #30–#31 (Empowered clears on board
