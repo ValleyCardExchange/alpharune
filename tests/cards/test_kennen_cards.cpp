@@ -566,5 +566,77 @@ TEST_F(KennenCardsTest, LightningRush_TwoCardDeck_RevealsTwo) {
     EXPECT_TRUE(inTrash(P1, b));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Task 8 — 791 Up from the Deep
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Test #21 — creates two exhausted 1-might Tentacle units in base ──────
+
+TEST_F(KennenCardsTest, UpFromTheDeep_CreatesTwoExhaustedOneMightTentacles) {
+    EffectExecutor exec(state, events, card_db, &card_registry);
+    auto source = state.createObject();
+    CardContext ctx{state, events, exec, P1, source};
+    Card* card = card_registry.get(kUpFromTheDeep);
+    ASSERT_NE(card, nullptr);
+    card->onResolve(ctx, {});
+
+    std::vector<GameObjectId> tentacles;
+    for (auto& [id, obj] : state.objects) {
+        if (obj.name == "Tentacle") tentacles.push_back(id);
+    }
+    ASSERT_EQ(tentacles.size(), 2u);
+    for (auto id : tentacles) {
+        auto& t = state.getObject(id);
+        EXPECT_EQ(t.card_type, CardType::Unit);
+        EXPECT_EQ(t.current_might, 1);
+        EXPECT_EQ(t.base_might, 1);
+        EXPECT_TRUE(t.is_exhausted);
+        EXPECT_NE(std::find(t.tags.begin(), t.tags.end(), "Tentacle"), t.tags.end());
+        EXPECT_NE(std::find(t.tags.begin(), t.tags.end(), "Bilgewater"), t.tags.end());
+        ASSERT_TRUE(t.location.has_value());
+        EXPECT_TRUE(std::holds_alternative<BaseLocation>(*t.location));
+        EXPECT_EQ(std::get<BaseLocation>(*t.location).player, P1);
+        EXPECT_EQ(t.zone, ZoneType::Base);
+    }
+}
+
+// ─── Test #28 (addendum #7) — tokens don't empower Heart of the Tempest ───
+
+TEST_F(KennenCardsTest, UpFromTheDeep_TokensDoNotEmpowerHeartOfTheTempest) {
+    GameEngine engine(card_db, events, card_registry);
+    FirstChoiceAgent agent1, agent2;
+    engine.testHook_setAgents(&agent1, &agent2);
+    engine.testHook_initSubsystems();
+    auto& s = engine.mutableState();
+    s.mode = ModeOfPlay{};
+    s.players[0].id = P1;
+    s.players[1].id = P2;
+    BattlefieldState b0; b0.id = 0; s.battlefields.push_back(b0);
+    BattlefieldState b1; b1.id = 1; s.battlefields.push_back(b1);
+
+    auto legend_id = s.createObject();
+    {
+        auto& leg = s.getObject(legend_id);
+        leg.owner = P1; leg.controller = P1;
+        leg.card_def_id = kHeartOfTheTempest;
+        leg.name = "Heart of the Tempest";
+        leg.card_type = CardType::Legend;
+        leg.zone = ZoneType::LegendZone;
+    }
+    s.player(P1).legend_zone = legend_id;
+    ASSERT_FALSE(s.getObject(legend_id).is_empowered);
+
+    EffectExecutor exec(s, events, card_db, &card_registry);
+    auto source = s.createObject();
+    CardContext ctx{s, events, exec, P1, source};
+    Card* card = card_registry.get(kUpFromTheDeep);
+    ASSERT_NE(card, nullptr);
+    card->onResolve(ctx, {});
+
+    EXPECT_FALSE(s.getObject(legend_id).is_empowered)
+        << "Token creation (CR 185, 350.2 — tokens are not cards) must "
+           "never fire WhenYouPlayFromNonHand.";
+}
+
 }  // namespace
 }  // namespace riftbound::test
